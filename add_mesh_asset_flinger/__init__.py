@@ -33,10 +33,44 @@ import blf
 import os
 import pprint
 
+import subprocess, re
+
 from bpy.types import AddonPreferences
 from bpy.props import (BoolProperty, EnumProperty,
                        FloatProperty, FloatVectorProperty,
                        IntProperty, StringProperty)
+
+from bpy_extras.io_utils import ExportHelper
+
+# https://stackoverflow.com/questions/4417546/constantly-print-subprocess-output-while-process-is-running
+def execute(cmd):
+    popen = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
+    for stdout_line in iter(popen.stdout.readline, ""):
+        yield stdout_line
+    popen.stdout.close()
+    return_code = popen.wait()
+    #if return_code:
+    #    raise subprocess.CalledProcessError(return_code, cmd)
+
+def createThumbnail(blender, thumbscene, scene, material = ""):
+    print("*** CALL THUMBNAIL GEN ***")
+    wm = bpy.context.window_manager
+    # Parse Tracing Sample to show as progress.
+    wm.progress_begin(0, 300)
+    ptrn = re.compile(".*Path Tracing Sample\\s+(\\d+)/\\d+.*")
+    # Run external instance of blender like the original thumbnail generator.
+    for l in execute([blender, "-b", thumbscene, "--python-text", "ThumbScript", "--", "obj:" + scene, "mat:" + material]):
+        # Log special prefixed lines (using log/log_object functions in thumnbail scripts).
+        if(l.startswith("[]scr")):
+            print(l.strip()[5:])
+
+        # If contains progress analyse and update progress.
+        pts = ptrn.match(l)
+        if pts:
+            wm.progress_update(int(pts.group(1)))
+            #print(float(pts.group(1))/3)
+
+    wm.progress_end()
 
 class AssetFlingerPreferences(AddonPreferences):
     bl_idname = __name__
@@ -232,6 +266,7 @@ class AssetFlingerMenu(bpy.types.Operator):
     bl_label = "Asset Flinger"
     tree_index = ''
     current_dir_content = []
+    imageList = []
 
     def clearImages(self):
         # Cleaner for Images
@@ -430,6 +465,41 @@ class AssetFlingerMenu(bpy.types.Operator):
             self.report({'WARNING'}, "View3D not found, cannot show asset flinger")
             return {'CANCELLED'}
 
+class AssetFlingerExport(bpy.types.Operator, ExportHelper):
+    """
+    Manages all export related tasks. Uses ExportHelper for export obj file
+    selection.
+    """
+    bl_idname = "export.asset_flinger"
+    bl_label = "Asset Flinger Model Export"
+
+    filename_ext = ".obj"
+    filter_glob = StringProperty(
+            default="*.obj;*.mtl",
+            options={'HIDDEN'},
+            )
+
+    def execute(self, context):
+        """
+        This gets called after user has selected a file for export.
+        """
+        # Write wavefront obj to media.
+        bpy.ops.export_scene.obj(
+            filepath=self.properties.filepath,
+            use_selection = True,
+            use_mesh_modifiers = False
+        )
+
+        # Run thumbnail generator.
+        createThumbnail(
+            bpy.app.binary_path,
+            os.path.join(libraryPath, "thumbnailer/ThumbNailer.blend"),
+            self.properties.filepath,
+            "metal"
+        )
+
+        return {'FINISHED'}
+
 # store keymaps here to access after registration
 addon_keymaps = []
 
@@ -440,6 +510,7 @@ def menu_draw(self, context):
 
 def register():
     bpy.utils.register_class(AssetFlingerMenu)
+    bpy.utils.register_class(AssetFlingerExport)
     bpy.types.INFO_MT_mesh_add.append(menu_draw)
     bpy.utils.register_class(AssetFlingerPreferences)
 
@@ -449,10 +520,12 @@ def register():
     if kc:
         km = kc.keymaps.new(name='3D View', space_type='VIEW_3D')
         kmi = km.keymap_items.new('view3d.asset_flinger', 'A', 'PRESS', ctrl=True, shift=True, alt=True)
-        kmi = km.keymap_items.new('export_scene.obj', 'E', 'PRESS', ctrl=True, shift=True, alt=True)
-        kmi.properties.use_selection = True
-        kmi.properties.use_mesh_modifiers = False
+        #kmi = km.keymap_items.new('export_scene.obj', 'E', 'PRESS', ctrl=True, shift=True, alt=True)
+        kmi = km.keymap_items.new('export.asset_flinger', 'E', 'PRESS', ctrl=True, shift=True, alt=True)
+        #kmi.properties.use_selection = True
+        #kmi.properties.use_mesh_modifiers = False
 
+        addon_keymaps.append((km, kmi))
 
 
         '''
@@ -465,10 +538,10 @@ def register():
     kmi.properties.use_mesh_modifiers = False
     '''
 
-    addon_keymaps.append((km, kmi))
 
 def unregister():
     bpy.utils.unregister_class(AssetFlingerMenu)
+    bpy.utils.unregister_class(AssetFlingerExport)
     bpy.utils.unregister_class(AssetFlingerPreferences)
 
     # handle the keymap
