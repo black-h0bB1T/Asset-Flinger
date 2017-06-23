@@ -493,9 +493,8 @@ class AssetFlingerExport(bpy.types.Operator, ExportHelper):
         # Run thumbnail generator.
         createThumbnail(
             bpy.app.binary_path,
-            os.path.join(libraryPath, "thumbnailer/ThumbNailer.blend"),
-            self.properties.filepath,
-            "metal"
+            os.path.join(libraryPath, "thumbnailer/Thumbnailer.blend"),
+            self.properties.filepath
         )
 
         return {'FINISHED'}
