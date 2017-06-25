@@ -25,25 +25,36 @@ bl_info = {
         "blender": (2, 70, 0),
         "location": "View3D > Add > Mesh > Asset Flinger",
         "description": "Simple Mesh Importer",
-        "category": "Add Mesh"}
+        "category": "Add Mesh"
+}
 
-import bpy
-import bgl
-import blf
-import os
-import pprint
+import subprocess, re, os
 
-import subprocess, re
-
-from bpy.types import AddonPreferences
-from bpy.props import (BoolProperty, EnumProperty,
-                       FloatProperty, FloatVectorProperty,
-                       IntProperty, StringProperty)
-
+import bpy, bgl, blf, pprint
+from bpy.types import AddonPreferences, Operator
+from bpy.props import (
+    BoolProperty,
+    EnumProperty,
+    FloatProperty,
+    FloatVectorProperty,
+    IntProperty,
+    StringProperty
+    )
 from bpy_extras.io_utils import ExportHelper
+
+def log(s):
+    """
+    Central log fn, lets modify logging behavior in a single place.
+    """
+    print("[asset-flinger] - %s" % s)
 
 # https://stackoverflow.com/questions/4417546/constantly-print-subprocess-output-while-process-is-running
 def execute(cmd):
+    """
+    Runs an external application, in this case the blender executable for
+    thumbnail generation. Returns all lines written by this application to stdout
+    immediately on a line by line basis.
+    """
     popen = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
     for stdout_line in iter(popen.stdout.readline, ""):
         yield stdout_line
@@ -53,7 +64,14 @@ def execute(cmd):
     #    raise subprocess.CalledProcessError(return_code, cmd)
 
 def createThumbnail(blender, thumbscene, scene, material = ""):
-    print("*** CALL THUMBNAIL GEN ***")
+    """
+    Used to create the thumbnail for the obj object specified in parameter 'scene', full path
+    is required. 'blender' is the path to the blender executable (bpy.app.binary_path).
+    'thumbscene' is the scene to place the object in for thumbnail and contains itself some python
+    scripting. If 'material' is specified, objects are prepared with the material, which must exist
+    in the 'thumbscene'. Atm the thumbscene is bundled with Asset-Flinger.
+    """
+    log("*** CALL THUMBNAIL GEN ***")
     wm = bpy.context.window_manager
     # Parse Tracing Sample to show as progress.
     wm.progress_begin(0, 300)
@@ -61,8 +79,8 @@ def createThumbnail(blender, thumbscene, scene, material = ""):
     # Run external instance of blender like the original thumbnail generator.
     for l in execute([blender, "-b", thumbscene, "--python-text", "ThumbScript", "--", "obj:" + scene, "mat:" + material]):
         # Log special prefixed lines (using log/log_object functions in thumnbail scripts).
-        if(l.startswith("[]scr")):
-            print(l.strip()[5:])
+        if l.startswith("[]scr"):
+            log(l.strip()[5:])
 
         # If contains progress analyse and update progress.
         pts = ptrn.match(l)
@@ -71,6 +89,14 @@ def createThumbnail(blender, thumbscene, scene, material = ""):
             #print(float(pts.group(1))/3)
 
     wm.progress_end()
+
+def exportSelectedInstalled():
+    """
+    Check if the export selected addon is installed, which allows export as .blend, so
+    all settings (material, modifiers, ...) are preserved.
+    https://wiki.blender.org/index.php/Extensions:2.6/Py/Scripts/Import-Export/Export_Selected
+    """
+    return hasattr(bpy.types, "OBJECT_MT_selected_export")
 
 class AssetFlingerPreferences(AddonPreferences):
     bl_idname = __name__
@@ -163,7 +189,6 @@ def drawMenuItem(item, x, y, width, height):
     blf.draw(font_id, item['text'])
 
 def drawCallbackMenu(self, context):
-
     global targetItemWidth
     global targetItemHeight
 
@@ -222,8 +247,6 @@ def drawCallbackMenu(self, context):
     #bgl.glColor4f(0.0, 0.0, 0.0, 1.0)
 
 def getClicked(self, context):
-
-
     global targetItemWidth
     global targetItemHeight
 
@@ -260,13 +283,35 @@ def getClicked(self, context):
             row += 1
     return None
 
-class AssetFlingerMenu(bpy.types.Operator):
-
+class AssetFlingerMenu(Operator):
     bl_idname = "view3d.asset_flinger"
     bl_label = "Asset Flinger"
     tree_index = ''
     current_dir_content = []
     imageList = []
+
+    def importObject(self, filename):
+        basename, _ = os.path.splitext(filename)
+        log("Import object '%s'" % basename)
+
+        # Prefer the blend to .obj.
+        if os.path.exists(basename + ".blend"):
+            log("Use .blend version")
+            # https://blender.stackexchange.com/questions/34540/how-to-link-append-a-data-block-using-the-python-api
+            with bpy.data.libraries.load(basename + ".blend", link=True) as (dfrom, dto):
+                dto.objects = dfrom.objects
+
+            for obj in dto.objects:
+                if obj is not None:
+                    log("  Append: %s" % obj)
+                    bpy.context.scene.objects.link(obj)
+
+            return
+
+        # Ok hopefully the obj exists.
+        if os.path.exists(basename + ".obj"):
+            log("Use .obj version")
+            bpy.ops.import_scene.obj(filepath=basename + ".obj")
 
     def clearImages(self):
         # Cleaner for Images
@@ -303,7 +348,7 @@ class AssetFlingerMenu(bpy.types.Operator):
 
             else:
                 bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
-                bpy.ops.import_scene.obj(filepath=selected['filename'])
+                self.importObject(selected['filename'])
                 bpy.ops.view3d.snap_selected_to_cursor()
                 bpy.context.scene.objects.active = bpy.context.selected_objects[0]
 
@@ -465,17 +510,17 @@ class AssetFlingerMenu(bpy.types.Operator):
             self.report({'WARNING'}, "View3D not found, cannot show asset flinger")
             return {'CANCELLED'}
 
-class AssetFlingerExport(bpy.types.Operator, ExportHelper):
+class AssetFlingerExport(Operator, ExportHelper):
     """
-    Manages all export related tasks. Uses ExportHelper for export obj file
-    selection.
+    Manages all export related tasks. Uses ExportHelper for export file selection.
     """
     bl_idname = "export.asset_flinger"
     bl_label = "Asset Flinger Model Export"
 
+    # Exporter stuff.
     filename_ext = ".obj"
     filter_glob = StringProperty(
-            default="*.obj;*.mtl",
+            default="*.obj;*.blend",
             options={'HIDDEN'},
             )
 
@@ -483,20 +528,42 @@ class AssetFlingerExport(bpy.types.Operator, ExportHelper):
         """
         This gets called after user has selected a file for export.
         """
-        # Write wavefront obj to media.
+        basename, _ = os.path.splitext(self.properties.filepath)
+
+        ###########################################
+        # .blend export
+
+        # If the 'export selected' addon is installed ...
+        if exportSelectedInstalled():
+            log("Export as .blend")
+            bpy.ops.export_scene.selected(
+                exporter_str = "BLEND",
+                filepath = basename + ".blend"
+            )
+
+        ###########################################
+        # .obj export and thumb generation
+
+        # Write wavefront obj to file.
+        log("Export as .obj");
         bpy.ops.export_scene.obj(
-            filepath=self.properties.filepath,
+            filepath = basename + ".obj",
             use_selection = True,
-            use_mesh_modifiers = False
+            use_mesh_modifiers = True,
+            use_materials = False
         )
 
-        # Run thumbnail generator.
+        # Run thumbnail generator for this .obj.
+        log("Create thumbnail.")
         createThumbnail(
             bpy.app.binary_path,
             os.path.join(libraryPath, "thumbnailer/Thumbnailer.blend"),
             self.properties.filepath
         )
 
+        ###########################################
+        # Done
+        log("Completed.")
         return {'FINISHED'}
 
 # store keymaps here to access after registration
