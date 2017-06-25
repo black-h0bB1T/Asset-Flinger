@@ -21,8 +21,8 @@
 
 bl_info = {
         "name": "Asset Flinger",
-        "version": (0, 1),
-        "blender": (2, 70, 0),
+        "version": (0, 3),
+        "blender": (2, 78, 0),
         "location": "View3D > Add > Mesh > Asset Flinger",
         "description": "Simple Mesh Importer",
         "category": "Add Mesh"
@@ -42,7 +42,6 @@ from bpy.props import (
     )
 from bpy_extras.io_utils import ExportHelper
 
-# TODO: Scrollable.
 # TODO: Link-Append sub-buttons.
 # TODO: Better error handling.
 # TODO: Change access to paths of af-things as function.
@@ -365,6 +364,7 @@ class ScreenRenderer:
 
         # Scroll through assets.
         self._scrollPos = 0
+        self._maxScroll = 0
 
         # Limit the asset menu area (for e.g. later additions).
         self._menuTop = 20
@@ -401,7 +401,7 @@ class ScreenRenderer:
             if image.filepath_raw in lst:
                 #log("CLEAN TEX:" + image.filepath_raw)
                 image.user_clear()
-                bpy.data.images.remove(image, do_unlink=True)
+                bpy.data.images.remove(image, do_unlink = True)
         lst.clear()
 
     def dispose(self):
@@ -447,6 +447,20 @@ class ScreenRenderer:
         if len(self._dbg) > 0:
             RenderTools.renderText((0.6, 0.6, 1, 1), 5, 8, 16, self._dbg)
 
+    def scrollArea(self, count, width, height):
+        """
+        Total height of all menu items. Used to determine scroll area.
+        """
+        count = len(self._items)
+        itemsPerLine = round(width / preferences().menuItemWidth())
+        lines = round(count / itemsPerLine) + (1 if (count % itemsPerLine) != 0 else 0)
+        maxHeight = lines * preferences().menuItemHeight()
+        displayHeight = height - self._menuTop
+
+        if displayHeight >= maxHeight:
+            return 0
+        return maxHeight - displayHeight
+
     def calcMenuItemRect(self, index, count, width, height):
         """
         Based on valid area size, return the position of item number 'index', if count items should be rendered.
@@ -470,7 +484,7 @@ class ScreenRenderer:
 
         return (
             col * effectiveItemWidth,
-            height - (row + 1) * preferences().menuItemHeight() - self._menuTop,
+            height - (row + 1) * preferences().menuItemHeight() - self._menuTop + self._scrollPos,
             effectiveItemWidth,
             preferences().menuItemHeight()
         )
@@ -483,6 +497,16 @@ class ScreenRenderer:
         # Render the background darker.
         RenderTools.renderRect(preferences().bgColor(), 0, 0, width, height)
 
+        # Update scroll info.
+        self._maxScroll = self.scrollArea(len(self._items), width, height)
+        if self._scrollPos > self._maxScroll:
+            self._scrollPos = self.maxScroll
+        #self._dbg = "%f" % self._maxScroll
+
+        # Limit drawing area.
+        #bgl.glScissor(0, 0, width, height - self._menuTop)
+        #bgl.glEnable(bgl.GL_SCISSOR_TEST)
+
         # Render the menu items.
         if not self._items:
             # Show informational text at the top.
@@ -493,6 +517,11 @@ class ScreenRenderer:
                 # The target rectangle, based on current view size.
                 itemRect = self.calcMenuItemRect(index, len(self._items), width, height)
                 e.draw(itemRect, (self._mouseX, self._mouseY))
+
+        #bgl.glDisable(bgl.GL_SCISSOR_TEST)
+
+        # Render another dark rectangle on top.
+        RenderTools.renderRect(preferences().bgColor(), 0, height - self._menuTop, width, self._menuTop)
 
         self.renderDebug()
 
@@ -519,6 +548,18 @@ class ScreenRenderer:
         if button == "RIGHTMOUSE":
             self._finished = True
 
+    def wheel(self, up):
+        """
+        Handle mouse wheel event.
+        """
+        scrollAmount = 72
+        if not up:
+            self._scrollPos += scrollAmount
+            if self._scrollPos > self._maxScroll:
+                self._scrollPos = self._maxScroll
+        else:
+            self._scrollPos = 0 if self._scrollPos < scrollAmount else self._scrollPos - scrollAmount
+
     def otherEvent(self, event):
         if event.type == "ESC":
             self._finished = True
@@ -542,7 +583,10 @@ class AssetFlingerMenu(Operator):
             self._renderer.mouseMove(event.mouse_region_x, event.mouse_region_y)
         elif event.type == "LEFTMOUSE" or event.type == "MIDDLEMOUSE" or event.type == "RIGHTMOUSE":
             self._renderer.mouseClick(event.mouse_region_x, event.mouse_region_y, event.type, event.value)
+        elif event.type == "WHEELUPMOUSE" or event.type == "WHEELDOWNMOUSE":
+            self._renderer.wheel(event.type == "WHEELUPMOUSE")
         else:
+            #log(repr(event.type))
             self._renderer.otherEvent(event)
 
         # Check if renderer signals that it can be removed.
