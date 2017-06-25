@@ -28,7 +28,7 @@ bl_info = {
         "category": "Add Mesh"
 }
 
-import subprocess, re, os
+import subprocess, re, os, threading
 
 import bpy, bgl, blf, pprint
 from bpy.types import AddonPreferences, Operator
@@ -42,11 +42,32 @@ from bpy.props import (
     )
 from bpy_extras.io_utils import ExportHelper
 
+# TODO: Scrollable.
+# TODO: Link-Append sub-buttons.
+# TODO: Better error handling.
+# TODO: Change access to paths of af-things as function.
+# TODO: Standalone version für blend export (remove export selected dependency).
+# TODO: Update author + copyright.
+# TODO: Support multiple asset dirs? Not really useful, could be done file system wise.
+
+# Full path to "\addons\add_mesh_asset_flinger\" -directory
+paths = bpy.utils.script_paths("addons")
+
+libraryPath = 'assets'
+for path in paths:
+    libraryPath = os.path.join(path, "add_mesh_asset_flinger")
+    if os.path.exists(libraryPath):
+        break
+
+if not os.path.exists(libraryPath):
+    raise NameError('Did not find assets path from ' + libraryPath)
+libraryIconsPath = os.path.join(libraryPath, "icons")
+
 def log(s):
     """
     Central log fn, lets modify logging behavior in a single place.
     """
-    print("[asset-flinger] - %s" % s)
+    print("[asset-flinger, %5i] - %s" % (threading.get_ident(), s))
 
 # https://stackoverflow.com/questions/4417546/constantly-print-subprocess-output-while-process-is-running
 def execute(cmd):
@@ -98,417 +119,463 @@ def exportSelectedInstalled():
     """
     return hasattr(bpy.types, "OBJECT_MT_selected_export")
 
+def preferences():
+    """
+    Return the instance of the AF user preferences.
+    """
+    return bpy.context.user_preferences.addons[__name__].preferences
+
+def importObject(filename):
+    """
+    Imports the specified object, prefer .blend if available, otherwise take .obj.
+    """
+    # Cut off extension, import object by extension preference.
+    basename, _ = os.path.splitext(filename)
+    log("Import object '%s'" % basename)
+
+    # Prefer the blend to .obj.
+    if os.path.exists(basename + ".blend"):
+        log("Use .blend version")
+        # https://blender.stackexchange.com/questions/34540/how-to-link-append-a-data-block-using-the-python-api
+        with bpy.data.libraries.load(basename + ".blend", link=True) as (dfrom, dto):
+            dto.objects = dfrom.objects
+
+        for obj in dto.objects:
+            if obj is not None:
+                log("  Append: %s" % obj)
+                bpy.context.scene.objects.link(obj)
+
+        bpy.ops.view3d.snap_selected_to_cursor()
+        bpy.context.scene.objects.active = bpy.context.selected_objects[0]
+
+        return
+
+    # Ok hopefully the obj exists.
+    if os.path.exists(basename + ".obj"):
+        log("Use .obj version")
+        bpy.ops.import_scene.obj(filepath=basename + ".obj")
+
+class RenderTools:
+    """
+    Handle drawing functionality in one place. If future versions of blender
+    have a different API, changes are restricted to this class.
+    """
+    @staticmethod
+    def renderTexture(texture, x, y, width, height):
+        bgl.glEnable(bgl.GL_BLEND)
+        bgl.glBlendFunc(bgl.GL_SRC_ALPHA, bgl.GL_ONE_MINUS_SRC_ALPHA)
+
+        texture.gl_load()
+        bgl.glBindTexture(bgl.GL_TEXTURE_2D, texture.bindcode[0])
+
+        bgl.glEnable(bgl.GL_TEXTURE_2D)
+        bgl.glTexParameteri(bgl.GL_TEXTURE_2D, bgl.GL_TEXTURE_MIN_FILTER, bgl.GL_NEAREST)
+        bgl.glTexParameteri(bgl.GL_TEXTURE_2D, bgl.GL_TEXTURE_MAG_FILTER, bgl.GL_NEAREST)
+
+        bgl.glColor4f(1, 1, 1, 1)
+
+        bgl.glBegin(bgl.GL_QUADS)
+        bgl.glTexCoord2d(0, 0)
+        bgl.glVertex2d(x, y)
+        bgl.glTexCoord2d(0, 1)
+        bgl.glVertex2d(x, y + height)
+        bgl.glTexCoord2d(1, 1)
+        bgl.glVertex2d(x + width, y + height)
+        bgl.glTexCoord2d(1, 0)
+        bgl.glVertex2d(x + width , y)
+        bgl.glEnd()
+
+        texture.gl_free()
+
+    @staticmethod
+    def renderRect(color, x, y, width, height):
+        bgl.glEnable(bgl.GL_BLEND)
+        bgl.glColor4f(color[0], color[1], color[2], color[3])
+        bgl.glRectf(x, y, x + width, y + height)
+
+    @staticmethod
+    def renderText(color, x, y, size, text, dpi = 72):
+        bgl.glEnable(bgl.GL_BLEND)
+        bgl.glColor4f(color[0], color[1], color[2], color[3])
+
+        font_id = 0
+        blf.position(font_id, x, y, 0)
+        blf.size(font_id, size, dpi)
+        blf.draw(font_id, text)
+
 class AssetFlingerPreferences(AddonPreferences):
+    """
+    Preferences from addons menu. In addition, contains all information used
+    for visualization. So it could easily be enhanced for visual settings.
+    """
     bl_idname = __name__
+
     custom_library_path = StringProperty(
-            name="Your Library",
-            subtype='FILE_PATH',
-            )
+        name="Your Library",
+        subtype='FILE_PATH',
+        )
 
     def draw(self, context):
-            layout = self.layout
+        layout = self.layout
 
-            split = layout.split(percentage=1)
+        split = layout.split(percentage=1)
 
-            col = split.column()
-            sub = col.column(align=True)
-            sub.prop(self, "custom_library_path")
+        col = split.column()
+        sub = col.column(align=True)
+        sub.prop(self, "custom_library_path")
 
-            sub.separator()
+        sub.separator()
 
+    def iconSize(self): return 128
+    def menuItemMargins(self): return 4
+    def menuItemHeight(self): return self.iconSize() + 2 * self.menuItemMargins()
+    def menuItemWidth(self): return 400
+    def itemTextSize(self): return 16
 
-iconWidth = 128
-iconHeight = 128
-targetItemWidth = 400
-targetItemHeight = 128
+    def bgColor(self): return (0, 0, 0, 0.6)
+    def menuColor(self): return (0.447, 0.447, 0.447, 0.8)
+    def menuColorHighlighted(self): return (0.555, 0.555, 0.555, 0.8)
+    def itemTextColor(self): return (0, 0, 0, 0.8)
 
-# Full path to "\addons\add_mesh_asset_flinger\" -directory
-paths = bpy.utils.script_paths("addons")
+class MenuItem:
+    """
+    Represents an existing asset or folder. Handles drawing of the visual representation
+    as well as every user interaction with it.
+    """
+    def __init__(self, texture, text, folderInfo = None, assetInfo = None):
+        self._texture = texture
+        self._text = text
+        self._folderInfo = folderInfo
+        self._assetInfo = assetInfo
 
-libraryPath = 'assets'
-for path in paths:
-    libraryPath = os.path.join(path, "add_mesh_asset_flinger")
-    if os.path.exists(libraryPath):
-        break
+    def draw(self, rect, mouse):
+        """
+        Draws the menu item i the given rect.
+        """
+        x, y, w, h = rect
+        mx, my = mouse[0] - x, mouse[1] - y
+        isInside = mx >= 0 and mx < w and my >= 0 and my < h
 
-if not os.path.exists(libraryPath):
-    raise NameError('Did not find assets path from ' + libraryPath)
-libraryIconsPath = os.path.join(libraryPath, "icons")
-libraryDefaultModelsPath = os.path.join(libraryPath, "assets")
+        p = preferences()
+        margins = p.menuItemMargins()
+        iconSize = p.iconSize()
 
-def drawMenuItem(item, x, y, width, height):
-    global iconWidth
-    global iconHeight
+        # Render background triangle.
+        RenderTools.renderRect(
+            p.menuColorHighlighted() if isInside else p.menuColor(),
+            x + margins,
+            y + margins,
+            w - 2 * margins,
+            h - 2 * margins
+        )
 
-    iconMarginX = 4
-    iconMarginY = 4
-    textMarginX = 6
+        # Render icon.
+        RenderTools.renderTexture(
+            self._texture,
+            x + margins,
+            y + margins,
+            iconSize,
+            iconSize
+        )
 
-    textHeight = 16
-    textWidth = 72
+        # Render text for asset.
+        RenderTools.renderText(
+            p.itemTextColor(),
+            x + 3 * margins + iconSize,
+            y + h / 2,
+            p.itemTextSize(),
+            self._text + " - %i, %i" % (mx, my)
+        )
 
-    bgl.glEnable(bgl.GL_BLEND)
-    if item['highlighted']:
-        bgl.glColor4f(0.555, 0.555, 0.555, 0.8)
-    else:
-        bgl.glColor4f(0.447, 0.447, 0.447, 0.8)
+    def testClick(self, rect, mouse):
+        """
+        Handle user click, can be everywhere!
+        """
+        x, y, w, h = rect
+        mx, my = mouse[0] - x, mouse[1] - y
+        isInside = mx >= 0 and mx < w and my >= 0 and my < h
 
-    bgl.glRectf(x, y, x + width, y + height)
+        # If clicked inside this instance ...
+        if isInside:
+            # Check if its a folder entry ..
+            if self._folderInfo:
+                # Update menu in renderer.
+                self._folderInfo[2].setMenuItems(MenuItem.buildListForFolder(*self._folderInfo))
+            elif self._assetInfo:
+                # If this is an asset, import, link or whatever.
+                importObject(self._assetInfo[0])
+                self._assetInfo[1].setFinished()
 
-    texture = item['icon']
-    texture.gl_load()
-    bgl.glColor4f(0.0, 0.0, 1.0, 0.5)
-    #bgl.glLineWidth(1.5)
+    @staticmethod
+    def buildListForFolder(path, level, renderer):
+        """
+        Create the list of menu items for the given path. Level
+        is used to determine if the top level has been reached (.. prevented).
+        """
+        r = []
+        if level != 0:
+            r.append(MenuItem(
+                renderer.folderIcon(),
+                "..",
+                folderInfo = (os.path.abspath(os.path.join(path, os.pardir)), level - 1, renderer)
+            ))
 
-    #------ TEXTURE ---------#
-    bgl.glEnable(bgl.GL_BLEND)
-    bgl.glBindTexture(bgl.GL_TEXTURE_2D, texture.bindcode[0])
-    bgl.glTexParameteri(bgl.GL_TEXTURE_2D, bgl.GL_TEXTURE_MIN_FILTER, bgl.GL_NEAREST)
-    bgl.glTexParameteri(bgl.GL_TEXTURE_2D, bgl.GL_TEXTURE_MAG_FILTER, bgl.GL_NEAREST) #GL_LINEAR seems to be used in Blender for background images
-    bgl.glEnable(bgl.GL_TEXTURE_2D)
-    bgl.glBlendFunc(bgl.GL_SRC_ALPHA, bgl.GL_ONE_MINUS_SRC_ALPHA)
+        # Folders first ...
+        for e in sorted(os.listdir(path)):
+            full = os.path.join(path, e)
+            if os.path.isdir(full):
+                r.append(MenuItem(
+                    renderer.folderIcon(),
+                    e,
+                    folderInfo = (full, level + 1, renderer)
+                ))
 
-    bgl.glColor4f(1,1,1,1)
-    bgl.glBegin(bgl.GL_QUADS)
-    bgl.glTexCoord2d(0,0)
-    bgl.glVertex2d(x + iconMarginX, y)
-    bgl.glTexCoord2d(0,1)
-    bgl.glVertex2d(x + iconMarginX, y + iconHeight)
-    bgl.glTexCoord2d(1,1)
-    bgl.glVertex2d(x + iconMarginX + iconWidth, y + iconHeight)
-    bgl.glTexCoord2d(1,0)
-    bgl.glVertex2d(x + iconMarginX + iconWidth , y)
-    bgl.glEnd()
+        for e in sorted(os.listdir(path)):
+            full = os.path.join(path, e)
+            basename, ext = os.path.splitext(full)
+            if ext.lower() == ".obj":
+                iconImage = basename + ".png"
+                icon = renderer.loadIcon(iconImage, False) if os.path.exists(iconImage) else renderer.noThumbnailIcon()
+                if not os.path.isdir(full):
+                    r.append(MenuItem(
+                        icon,
+                        os.path.basename(basename),
+                        assetInfo = (full, renderer)
+                    ))
 
-    texture.gl_free()
+        return r
 
-    # draw some text
-    font_id = 0
-    blf.position(font_id, x + iconMarginX + iconWidth + textMarginX, y + iconHeight * 0.5 - 0.25 * textHeight, 0)
-    blf.size(font_id, textHeight, textWidth)
-    blf.draw(font_id, item['text'])
+class ScreenRenderer:
+    """
+    Handles the rendering of the asset selection OSD as well as user interaction
+    with the OSD. Manages loaded textures and cleans them up when calling dispose() which
+    is done before releasing the object.
+    """
+    def __init__(self):
+        self._dbg = ""
+        self._finished = False
 
-def drawCallbackMenu(self, context):
-    global targetItemWidth
-    global targetItemHeight
+        # Last known mouse positions.
+        self._mouseX = -1
+        self._mouseY = -1
 
-    marginX = 20
-    marginY = 5
-    paddingX = 5
+        # Store screen dimension in last draw call.
+        self._width = -1
+        self._height = -1
 
+        # Scroll through assets.
+        self._scrollPos = 0
 
-    bgl.glEnable(bgl.GL_BLEND)
-    bgl.glColor4f(0.0, 0.0, 0.0, 0.6)
-    bgl.glRectf(0,0,context.area.regions[4].width,context.area.regions[4].height)
+        # Limit the asset menu area (for e.g. later additions).
+        self._menuTop = 20
 
-    contentWidth = context.area.regions[4].width - marginX * 2
-    contentHeight = context.area.regions[4].height - marginY * 2
+        self._items = []
 
-    contentX = marginX
-    contentY = context.area.height - marginY - targetItemHeight - 50
+        # Lists to store info about loaded textures (for later cleanup).
+        self._genericIcons = []
+        self._specificIcons = []
 
-    colCount = int(contentWidth / targetItemWidth)
+        # Some icons for multiple uses.
+        self._folderIcon = self.loadIcon(os.path.join(libraryIconsPath, "folder.png"), True)
+        self._noThumbnailIcon = self.loadIcon(os.path.join(libraryIconsPath, "nothumbnail.png"), True)
 
-    itemWidth = (contentWidth - (colCount * paddingX)) / (colCount + 1)
-    itemHeight = targetItemHeight
+    def loadIcon(self, path, generic):
+        """
+        Load icon as texture and return id. Stores information for later cleanup in one
+        of the internal lists. One will cleanup of on every folder change, the other on final cleanup.
+        """
+        log("Load image: " + path)
+        tid = bpy.data.images.load(filepath = path, check_existing = True)
+        if generic:
+            self._genericIcons.append(tid.filepath_raw)
+        else:
+            self._specificIcons.append(tid.filepath_raw)
+        #log("   RAW: " + tid.filepath_raw)
+        return tid
 
-    col = 0
-    row = 0
-    x = contentX
-    y = contentY
+    def freeImages(self, lst):
+        """
+        Free textures not needed anymore.
+        """
+        for image in bpy.data.images:
+            if image.filepath_raw in lst:
+                #log("CLEAN TEX:" + image.filepath_raw)
+                image.user_clear()
+                bpy.data.images.remove(image, do_unlink=True)
+        lst.clear()
 
-    if len(self.current_dir_content ) == 0:
-        font_id = 0
-        text = "Folder doesn't contain any assets!"
-        bgl.glColor4f(1.0, 1.0, 1.0, 1.0)
-        blf.size(font_id, 20, 72)
-        textWidth, textHeight = blf.dimensions(font_id, text)
-        blf.position(font_id, contentX + contentWidth * 0.5 - textWidth * 0.5, contentY - contentHeight * 0.5 + textHeight * 0.5, 0)
-        blf.draw(font_id, text)
-    else:
-        for item in self.current_dir_content:
-            if self.mouseX > x and self.mouseX < x + itemWidth and self.mouseY > y and self.mouseY < y + itemHeight:
-                item['highlighted'] = True
-            else:
-                item['highlighted'] = False
+    def dispose(self):
+        """
+        Called on termination, frees all loaded resources.
+        """
+        self.freeImages(self._genericIcons)
+        self.freeImages(self._specificIcons)
 
-            drawMenuItem(item, x, y, itemWidth, itemHeight)
-            x = x + itemWidth + paddingX
-            col += 1
+    def folderIcon(self): return self._folderIcon
+    def noThumbnailIcon(self): return self._noThumbnailIcon
 
-            if col > colCount:
-                col = 0
-                x = contentX
-                y = y - itemHeight - marginY
-                row += 1
+    def setMenuItems(self, items):
+        """
+        Set new list of menu items.
+        """
+        # Clear previous resources.
+        #self.freeImages(self._specificIcons)
+        self._items = items
 
-    bgl.glDisable(bgl.GL_BLEND)
-    bgl.glDisable(bgl.GL_TEXTURE_2D)
-    #bgl.glColor4f(0.0, 0.0, 0.0, 1.0)
+    def setFinished(self):
+        """
+        Set finish state from outside (used after asset load).
+        """
+        self._finished = True
 
-def getClicked(self, context):
-    global targetItemWidth
-    global targetItemHeight
+    def isFinished(self):
+        """
+        Reports if finished is reached (if asset has been load or any user interaction).
+        """
+        return self._finished
 
-    marginX = 20
-    marginY = 5
-    paddingX = 5
+    def renderInfo(self, s, height):
+        """
+        Render textual info in the top area.
+        """
+        RenderTools.renderText((0.6, 1, 0.6, 1), 5, height - 16, 16, s)
 
-    contentWidth = context.area.regions[4].width - marginX * 2
-    contentHeight = context.area.regions[4].height - marginY * 2
+    def renderDebug(self):
+        """
+        Render text in the lower area.
+        """
+        if len(self._dbg) > 0:
+            RenderTools.renderText((0.6, 0.6, 1, 1), 5, 8, 16, self._dbg)
 
-    contentX = marginX
-    contentY = context.area.height - marginY - targetItemHeight - 50
+    def calcMenuItemRect(self, index, count, width, height):
+        """
+        Based on valid area size, return the position of item number 'index', if count items should be rendered.
+        """
+        count = len(self._items)
+        itemsPerLine = round(width / preferences().menuItemWidth())
+        lines = round(count / itemsPerLine) + (1 if (count % itemsPerLine) != 0 else 0)
+        effectiveItemWidth = width / itemsPerLine
 
-    colCount = int(contentWidth / targetItemWidth)
+        col = index % itemsPerLine
+        row = int(index / itemsPerLine)
 
-    itemWidth = (contentWidth - (colCount * paddingX)) / (colCount + 1)
-    itemHeight = targetItemHeight
+        # self._dbg = "w: %f, c: %f, ipl: %f, lns: %f, eiw: %f" % (width, count, itemsPerLine, lines, effectiveItemWidth)
+        # log("%i - %f, %f" % (index, row, col))
+        # print((
+        #     col * effectiveItemWidth,
+        #     height - row * preferences().menuItemHeight(),
+        #     effectiveItemWidth,
+        #     preferences().menuItemHeight()
+        # ))
 
-    col = 0
-    row = 0
-    x = contentX
-    y = contentY
+        return (
+            col * effectiveItemWidth,
+            height - (row + 1) * preferences().menuItemHeight() - self._menuTop,
+            effectiveItemWidth,
+            preferences().menuItemHeight()
+        )
 
-    for item in self.current_dir_content:
-        if self.mouseX > x and self.mouseX < x + itemWidth and self.mouseY > y and self.mouseY < y + itemHeight:
-            return item
+    def draw(self, width, height):
+        self._width = width
+        self._height = height
+        menuHeight = height - self._menuTop
 
-        x = x + itemWidth + paddingX
-        col += 1
-        if col > colCount:
-            col = 0
-            x = contentX
-            y = y - itemHeight - marginY
-            row += 1
-    return None
+        # Render the background darker.
+        RenderTools.renderRect(preferences().bgColor(), 0, 0, width, height)
 
-class AssetFlingerMenu(Operator):
-    bl_idname = "view3d.asset_flinger"
-    bl_label = "Asset Flinger"
-    tree_index = ''
-    current_dir_content = []
-    imageList = []
+        # Render the menu items.
+        if not self._items:
+            # Show informational text at the top.
+            self.renderInfo("No items in asset folder, verify path (%s)." % preferences().custom_library_path)
+        else:
+            # Render item by item.
+            for index, e in enumerate(self._items):
+                # The target rectangle, based on current view size.
+                itemRect = self.calcMenuItemRect(index, len(self._items), width, height)
+                e.draw(itemRect, (self._mouseX, self._mouseY))
 
-    def importObject(self, filename):
-        basename, _ = os.path.splitext(filename)
-        log("Import object '%s'" % basename)
+        self.renderDebug()
 
-        # Prefer the blend to .obj.
-        if os.path.exists(basename + ".blend"):
-            log("Use .blend version")
-            # https://blender.stackexchange.com/questions/34540/how-to-link-append-a-data-block-using-the-python-api
-            with bpy.data.libraries.load(basename + ".blend", link=True) as (dfrom, dto):
-                dto.objects = dfrom.objects
+        # Cleanup render states.
+        bgl.glDisable(bgl.GL_BLEND)
+        bgl.glDisable(bgl.GL_TEXTURE_2D)
 
-            for obj in dto.objects:
-                if obj is not None:
-                    log("  Append: %s" % obj)
-                    bpy.context.scene.objects.link(obj)
+    def mouseMove(self, x, y):
+        self._mouseX = x
+        self._mouseY = y
 
+    def mouseClick(self, x, y, button, event):
+        #self._dbg = "%f, %f, %s, %s" % (x, y, button, event)
+        # Prevent crash.
+        if self._width < 1 or self._height < 1:
             return
 
-        # Ok hopefully the obj exists.
-        if os.path.exists(basename + ".obj"):
-            log("Use .obj version")
-            bpy.ops.import_scene.obj(filepath=basename + ".obj")
+        if button == "LEFTMOUSE" and event == "RELEASE":
+            for index, e in enumerate(self._items):
+                # The target rectangle, based on current view size.
+                itemRect = self.calcMenuItemRect(index, len(self._items), self._width, self._height)
+                e.testClick(itemRect, (x, y))
 
-    def clearImages(self):
-        # Cleaner for Images
-        # print ("here")
-        for image in bpy.data.images:
-            if image.filepath_raw in self.imageList:
-                # print (image.filepath_raw)
-                image.user_clear()
-                bpy.data.images.remove(image)
+        if button == "RIGHTMOUSE":
+            self._finished = True
 
-        # print ("images " + str(len(bpy.data.images)))
+    def otherEvent(self, event):
+        if event.type == "ESC":
+            self._finished = True
 
-        self.imageList.clear()
+class AssetFlingerMenu(Operator):
+    """
+    Renders the OSD menu to select an existing asset for import.
+    """
+    bl_idname = "view3d.asset_flinger"
+    bl_label = "Asset Flinger"
+
+    def __init__(self):
+        self._renderer = None
+        self._handle = None
 
     def modal(self, context, event):
         context.area.tag_redraw()
+
+        # Forward several events to the renderer.
         if event.type == 'MOUSEMOVE':
-            self.mouseX = event.mouse_region_x
-            self.mouseY = event.mouse_region_y
+            self._renderer.mouseMove(event.mouse_region_x, event.mouse_region_y)
+        elif event.type == "LEFTMOUSE" or event.type == "MIDDLEMOUSE" or event.type == "RIGHTMOUSE":
+            self._renderer.mouseClick(event.mouse_region_x, event.mouse_region_y, event.type, event.value)
+        else:
+            self._renderer.otherEvent(event)
 
-        elif event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
-            self.mouseX = event.mouse_region_x
-            self.mouseY = event.mouse_region_y
-            selected = getClicked(self, context)
-
-            if selected == None:
-                bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
-                return {'FINISHED'}
-
-            if selected['isFolder'] == True:
-
-                self.tree_index = os.path.normpath(os.path.join(self.tree_index, selected['text']))
-                self.browse_assets(self.tree_index)
-
-            else:
-                bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
-                self.importObject(selected['filename'])
-                bpy.ops.view3d.snap_selected_to_cursor()
-                bpy.context.scene.objects.active = bpy.context.selected_objects[0]
-
-                return {'FINISHED'}
-
-        elif event.type in {'RIGHTMOUSE', 'ESC'}:
+        # Check if renderer signals that it can be removed.
+        if self._renderer.isFinished():
             bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
-
-            return {'CANCELLED'}
+            self._renderer.dispose()
+            self._renderer = None
+            return {'FINISHED'}
 
         return {'RUNNING_MODAL'}
 
-    def buildAssetTree(self, parentItem, path):
-        parentItem['subItems'] = []
-
-        up_folder = {}
-        iconFile = os.path.join(libraryIconsPath, "folder.png")
-        up_folder['icon'] = bpy.data.images.load(filepath = iconFile)
-        self.imageList.append(up_folder['icon'].filepath_raw)
-        up_folder['text'] = '..'
-        up_folder['isFolder'] = True
-        up_folder['subItems'] = []
-        #up_folder['index'] = self.tree_index
-        parentItem['subItems'].append(up_folder)
-
-
-
-        file_list = [f for f in os.listdir(path) if not f.startswith('.')]
-        file_list.sort()
-        for name in file_list:
-            if os.path.isdir(os.path.join(path, name)):
-                menuItem = {}
-                iconFile = os.path.join(libraryIconsPath, "folder.png")
-                menuItem['icon'] = bpy.data.images.load(filepath = iconFile)
-                self.imageList.append(menuItem['icon'].filepath_raw)
-                menuItem['text'] = name
-                menuItem['isFolder'] = True
-                menuItem['subItems'] = []
-                parentItem['subItems'].append(menuItem)
-
-                #self.tree_index += 1
-
-                self.buildAssetTree(menuItem, os.path.join(path, name))
-
-
-
-        obj_list = [item for item in file_list if item[-3:] == 'obj']
-
-        for name in obj_list:
-            objItem = {}
-
-            iconFile = os.path.join(path, name.replace('obj','png'))
-            if not os.path.exists(iconFile):
-                iconFile = os.path.join(libraryIconsPath, "nothumbnail.png")
-
-            objItem['icon'] = bpy.data.images.load(filepath = iconFile)
-            self.imageList.append(objItem['icon'].filepath_raw)
-            text = os.path.splitext(name)[0]
-            objItem['text'] = text
-            objItem['isFolder'] = False
-            objItem['filename'] = os.path.join(path, name)
-            parentItem['subItems'].append(objItem)
-
-        #pprint.pprint(parentItem)
-
-    def browse_assets(self, path):
-
-        def up_folder(self):
-            # Create 'up' directory to go to previus dir (if we are not in the)
-            menuItem = {}
-            iconFile = os.path.join(libraryIconsPath, "folder.png")
-            menuItem['icon'] = bpy.data.images.load(filepath = iconFile)
-            self.imageList.append(menuItem['icon'].filepath_raw)
-            menuItem['text'] = '..'
-            menuItem['isFolder'] = True
-            self.current_dir_content.append(menuItem)
-
-
-        user_preferences = bpy.context.user_preferences
-        addon_prefs = user_preferences.addons[__name__].preferences
-
-        file_list = [f for f in os.listdir(path) if not f.startswith('.')]
-        file_list.sort()
-        self.current_dir_content = []
-
-        if path != libraryDefaultModelsPath:
-            if addon_prefs.custom_library_path:
-                if addon_prefs.custom_library_path != os.path.join(path, ''):
-                    up_folder(self)
-            else:
-                up_folder(self)
-        else:
-            if addon_prefs.custom_library_path:
-                menuItem = {}
-                iconFile = os.path.join(libraryIconsPath, "folder.png")
-                menuItem['icon'] = bpy.data.images.load(filepath = iconFile)
-                self.imageList.append(menuItem['icon'].filepath_raw)
-                menuItem['text'] = addon_prefs.custom_library_path
-                menuItem['isFolder'] = True
-                self.current_dir_content.append(menuItem)
-
-        for name in file_list:
-            if os.path.isdir(os.path.join(path, name)):
-                menuItem = {}
-                iconFile = os.path.join(libraryIconsPath, "folder.png")
-                menuItem['icon'] = bpy.data.images.load(filepath = iconFile)
-                self.imageList.append(menuItem['icon'].filepath_raw)
-                menuItem['text'] = name
-                menuItem['isFolder'] = True
-                self.current_dir_content.append(menuItem)
-                self.tree_index = path
-
-        obj_list = [item for item in file_list if item[-3:] == 'obj']
-
-        for name in obj_list:
-            objItem = {}
-
-            iconFile = os.path.join(path, name.replace('obj','png'))
-            if not os.path.exists(iconFile):
-                iconFile = os.path.join(libraryIconsPath, "nothumbnail.png")
-
-            objItem['icon'] = bpy.data.images.load(filepath = iconFile)
-            self.imageList.append(objItem['icon'].filepath_raw)
-            text = os.path.splitext(name)[0]
-            objItem['text'] = text
-            objItem['isFolder'] = False
-            objItem['filename'] = os.path.join(path, name)
-            self.current_dir_content.append(objItem)
-
-
-    def __del__(self):
-        # print("End")
-        self.clearImages()
-
     def invoke(self, context, event):
+        """
+        Called if user triggers the operator. Adds a custom render callback.
+        """
+        # Only this area type is supported.
         if context.area.type == 'VIEW_3D':
-
-
-            self.mouseX = event.mouse_region_x
-            self.mouseY = event.mouse_region_y
-
-            self.mainItem = {}
-            self.current_dir_content = []
-            self.imageList = []
-            self.buildAssetTree(self.mainItem, libraryDefaultModelsPath)
-            self.browse_assets(libraryDefaultModelsPath)
-
-            self.activeItem = self.mainItem
-
-            # the arguments we pass the the callback
-            args = (self, context)
-            # Add the region OpenGL drawing callback
-            # draw in view space with 'POST_VIEW' and 'PRE_VIEW'
-            self._handle = bpy.types.SpaceView3D.draw_handler_add(drawCallbackMenu, args, 'WINDOW', 'POST_PIXEL')
-
+            self._renderer = ScreenRenderer()
+            assets = preferences().custom_library_path
+            if len(assets) > 0:
+                self._renderer.setMenuItems(MenuItem.buildListForFolder(assets, 0, self._renderer))
+            self._handle = bpy.types.SpaceView3D.draw_handler_add(self.drawCallback, (context, ), 'WINDOW', 'POST_PIXEL')
             context.window_manager.modal_handler_add(self)
             return {'RUNNING_MODAL'}
         else:
             self.report({'WARNING'}, "View3D not found, cannot show asset flinger")
             return {'CANCELLED'}
+
+    def drawCallback(self, context):
+        self._renderer.draw(
+            context.area.regions[4].width,
+            context.area.regions[4].height
+        )
 
 class AssetFlingerExport(Operator, ExportHelper):
     """
@@ -586,24 +653,8 @@ def register():
     if kc:
         km = kc.keymaps.new(name='3D View', space_type='VIEW_3D')
         kmi = km.keymap_items.new('view3d.asset_flinger', 'A', 'PRESS', ctrl=True, shift=True, alt=True)
-        #kmi = km.keymap_items.new('export_scene.obj', 'E', 'PRESS', ctrl=True, shift=True, alt=True)
         kmi = km.keymap_items.new('export.asset_flinger', 'E', 'PRESS', ctrl=True, shift=True, alt=True)
-        #kmi.properties.use_selection = True
-        #kmi.properties.use_mesh_modifiers = False
-
         addon_keymaps.append((km, kmi))
-
-
-        '''
-    wm = bpy.context.window_manager
-    km = wm.keyconfigs.addon.keymaps.new(name='Asset Flinger', space_type='EMPTY')
-
-    kmi = km.keymap_items.new('view3d.asset_flinger', 'A', 'PRESS', ctrl=True, shift=True, alt=True)
-    kmi = km.keymap_items.new('export_scene.obj', 'E', 'PRESS', ctrl=True, shift=True, alt=True)
-    kmi.properties.use_selection = True
-    kmi.properties.use_mesh_modifiers = False
-    '''
-
 
 def unregister():
     bpy.utils.unregister_class(AssetFlingerMenu)
