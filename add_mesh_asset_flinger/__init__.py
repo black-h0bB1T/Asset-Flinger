@@ -45,7 +45,7 @@ from bpy_extras.io_utils import ExportHelper
 # TODO: Link-Append sub-buttons.
 # TODO: Better error handling.
 # TODO: Change access to paths of af-things as function.
-# TODO: Standalone version für blend export (remove export selected dependency).
+# TODO: Standalone version for blend export (remove export selected dependency).
 # TODO: Update author + copyright.
 # TODO: Support multiple asset dirs? Not really useful, could be done file system wise.
 
@@ -124,7 +124,7 @@ def preferences():
     """
     return bpy.context.user_preferences.addons[__name__].preferences
 
-def importObject(filename):
+def importObject(filename, link):
     """
     Imports the specified object, prefer .blend if available, otherwise take .obj.
     """
@@ -134,9 +134,9 @@ def importObject(filename):
 
     # Prefer the blend to .obj.
     if os.path.exists(basename + ".blend"):
-        log("Use .blend version")
+        log("Use .blend version, link = %s" % repr(link))
         # https://blender.stackexchange.com/questions/34540/how-to-link-append-a-data-block-using-the-python-api
-        with bpy.data.libraries.load(basename + ".blend", link=True) as (dfrom, dto):
+        with bpy.data.libraries.load(basename + ".blend", link = link) as (dfrom, dto):
             dto.objects = dfrom.objects
 
         for obj in dto.objects:
@@ -198,7 +198,7 @@ class RenderTools:
         bgl.glColor4f(color[0], color[1], color[2], color[3])
 
         font_id = 0
-        blf.position(font_id, x, y, 0)
+        blf.position(font_id, x, y - size / 2, 0)
         blf.size(font_id, size, dpi)
         blf.draw(font_id, text)
 
@@ -226,10 +226,12 @@ class AssetFlingerPreferences(AddonPreferences):
         sub.separator()
 
     def iconSize(self): return 128
+    def underlayWidth(self): return 180
     def menuItemMargins(self): return 4
     def menuItemHeight(self): return self.iconSize() + 2 * self.menuItemMargins()
     def menuItemWidth(self): return 400
-    def itemTextSize(self): return 16
+    def itemTextSize(self): return 20
+    def toolTipTextSize(self): return 10
 
     def bgColor(self): return (0, 0, 0, 0.6)
     def menuColor(self): return (0.447, 0.447, 0.447, 0.8)
@@ -241,15 +243,28 @@ class MenuItem:
     Represents an existing asset or folder. Handles drawing of the visual representation
     as well as every user interaction with it.
     """
-    def __init__(self, texture, text, folderInfo = None, assetInfo = None):
+    def __init__(self, texture, deco, text, folderInfo = None, assetInfo = None):
         self._texture = texture
+        self._deco = deco
         self._text = text
         self._folderInfo = folderInfo
         self._assetInfo = assetInfo
 
+    def append(self, x, y):
+        """
+        Check relative mouse position for appending area.
+        """
+        return y > 95 and y < 120
+
+    def link(self, x, y):
+        """
+        Check relative mouse position for link area (false for obj).
+        """
+        return self._assetInfo[1] and y > 70 and y < 95
+
     def draw(self, rect, mouse):
         """
-        Draws the menu item i the given rect.
+        Draws the menu item in the given rect.
         """
         x, y, w, h = rect
         mx, my = mouse[0] - x, mouse[1] - y
@@ -258,6 +273,11 @@ class MenuItem:
         p = preferences()
         margins = p.menuItemMargins()
         iconSize = p.iconSize()
+
+        texts = p.itemTextSize()
+        ttexts = p.toolTipTextSize()
+        textc = p.itemTextColor()
+        textx = x + margins + p.underlayWidth()
 
         # Render background triangle.
         RenderTools.renderRect(
@@ -268,23 +288,42 @@ class MenuItem:
             h - 2 * margins
         )
 
+        # Render a type specific background.
+        RenderTools.renderTexture(
+            self._deco,
+            x + 2 * margins,
+            y + margins,
+            p.underlayWidth(),
+            iconSize
+        )
+
         # Render icon.
         RenderTools.renderTexture(
             self._texture,
-            x + margins,
+            x + 2 * margins,
             y + margins,
             iconSize,
             iconSize
         )
 
         # Render text for asset.
-        RenderTools.renderText(
-            p.itemTextColor(),
-            x + 3 * margins + iconSize,
-            y + h / 2,
-            p.itemTextSize(),
-            self._text + " - %i, %i" % (mx, my)
-        )
+        RenderTools.renderText(textc, textx, y + 26, texts, self._text)
+
+        if self._assetInfo:
+            full, blendExists, renderer = self._assetInfo
+            info, infoy = "", 0
+
+            if isInside:
+                if self.append(mx, my):
+                    info = "Click to append"
+                    infoy = 107
+
+                if self.link(mx, my):
+                    info = "Click to link"
+                    infoy = 82
+
+                if len(info) > 0:
+                    RenderTools.renderText(textc, textx, y + infoy, ttexts, info)
 
     def testClick(self, rect, mouse):
         """
@@ -299,11 +338,20 @@ class MenuItem:
             # Check if its a folder entry ..
             if self._folderInfo:
                 # Update menu in renderer.
-                self._folderInfo[2].setMenuItems(MenuItem.buildListForFolder(*self._folderInfo))
+                full, level, renderer = self._folderInfo
+                renderer.setMenuItems(MenuItem.buildListForFolder(*self._folderInfo))
             elif self._assetInfo:
                 # If this is an asset, import, link or whatever.
-                importObject(self._assetInfo[0])
-                self._assetInfo[1].setFinished()
+                full, blendExists, renderer = self._assetInfo
+
+                # Device wether append or link (if supported).
+                if self.append(mx, my):
+                    importObject(full, False)
+                    renderer.setFinished()
+
+                if self.link(mx, my):
+                    importObject(full, True)
+                    renderer.setFinished()
 
     @staticmethod
     def buildListForFolder(path, level, renderer):
@@ -315,6 +363,7 @@ class MenuItem:
         if level != 0:
             r.append(MenuItem(
                 renderer.folderIcon(),
+                renderer.decoDirIcon(),
                 "..",
                 folderInfo = (os.path.abspath(os.path.join(path, os.pardir)), level - 1, renderer)
             ))
@@ -325,6 +374,7 @@ class MenuItem:
             if os.path.isdir(full):
                 r.append(MenuItem(
                     renderer.folderIcon(),
+                    renderer.decoDirIcon(),
                     e,
                     folderInfo = (full, level + 1, renderer)
                 ))
@@ -335,11 +385,14 @@ class MenuItem:
             if ext.lower() == ".obj":
                 iconImage = basename + ".png"
                 icon = renderer.loadIcon(iconImage, False) if os.path.exists(iconImage) else renderer.noThumbnailIcon()
+                blendExists = os.path.exists(basename + ".blend")
+                deco = renderer.decoBlendIcon() if blendExists else renderer.decoObjIcon()
                 if not os.path.isdir(full):
                     r.append(MenuItem(
                         icon,
+                        deco,
                         os.path.basename(basename),
-                        assetInfo = (full, renderer)
+                        assetInfo = (full, blendExists, renderer)
                     ))
 
         return r
@@ -378,6 +431,9 @@ class ScreenRenderer:
         # Some icons for multiple uses.
         self._folderIcon = self.loadIcon(os.path.join(libraryIconsPath, "folder.png"), True)
         self._noThumbnailIcon = self.loadIcon(os.path.join(libraryIconsPath, "nothumbnail.png"), True)
+        self._decoObjIcon = self.loadIcon(os.path.join(libraryIconsPath, "button-decoration-obj.png"), True)
+        self._decoBlendIcon = self.loadIcon(os.path.join(libraryIconsPath, "button-decoration-blend.png"), True)
+        self._decoDirIcon = self.loadIcon(os.path.join(libraryIconsPath, "button-decoration-dir.png"), True)
 
     def loadIcon(self, path, generic):
         """
@@ -413,6 +469,9 @@ class ScreenRenderer:
 
     def folderIcon(self): return self._folderIcon
     def noThumbnailIcon(self): return self._noThumbnailIcon
+    def decoObjIcon(self): return self._decoObjIcon
+    def decoBlendIcon(self): return self._decoBlendIcon
+    def decoDirIcon(self): return self._decoDirIcon
 
     def setMenuItems(self, items):
         """
