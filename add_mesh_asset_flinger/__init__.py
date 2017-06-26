@@ -110,14 +110,6 @@ def createThumbnail(blender, thumbscene, scene, material = ""):
 
     wm.progress_end()
 
-def exportSelectedInstalled():
-    """
-    Check if the export selected addon is installed, which allows export as .blend, so
-    all settings (material, modifiers, ...) are preserved.
-    https://wiki.blender.org/index.php/Extensions:2.6/Py/Scripts/Import-Export/Export_Selected
-    """
-    return hasattr(bpy.types, "OBJECT_MT_selected_export")
-
 def preferences():
     """
     Return the instance of the AF user preferences.
@@ -128,6 +120,10 @@ def importObject(filename, link):
     """
     Imports the specified object, prefer .blend if available, otherwise take .obj.
     """
+    # Deselect all, otherwise they were moved to the cursor position too.
+    for obj in bpy.data.objects:
+        obj.select = False
+    
     # Cut off extension, import object by extension preference.
     basename, _ = os.path.splitext(filename)
     log("Import object '%s'" % basename)
@@ -144,15 +140,13 @@ def importObject(filename, link):
                 log("  Append: %s" % obj)
                 bpy.context.scene.objects.link(obj)
 
-        bpy.ops.view3d.snap_selected_to_cursor()
-        bpy.context.scene.objects.active = bpy.context.selected_objects[0]
-
-        return
-
     # Ok hopefully the obj exists.
-    if os.path.exists(basename + ".obj"):
+    elif os.path.exists(basename + ".obj"):
         log("Use .obj version")
         bpy.ops.import_scene.obj(filepath=basename + ".obj")
+        
+    bpy.ops.view3d.snap_selected_to_cursor()
+    bpy.context.scene.objects.active = bpy.context.selected_objects[0]
 
 class RenderTools:
     """
@@ -313,12 +307,18 @@ class MenuItem:
             full, blendExists, renderer = self._assetInfo
             info, infoy = "", 0
 
+            RenderTools.renderText((0, 0, 0, 0.3), textx, y + 107, ttexts, "Click to append")
+            if blendExists:
+                RenderTools.renderText((0, 0, 0, 0.3), textx, y + 82, ttexts, "Click to link")
+            
             if isInside:
                 if self.append(mx, my):
+                    renderer.setInfo("Append object '%s' to scene ..." % self._text)
                     info = "Click to append"
                     infoy = 107
 
                 if self.link(mx, my):
+                    renderer.setInfo("Link object '%s' to scene ..." % self._text)
                     info = "Click to link"
                     infoy = 82
 
@@ -405,6 +405,7 @@ class ScreenRenderer:
     """
     def __init__(self):
         self._dbg = ""
+        self._nfo = ""
         self._finished = False
 
         # Last known mouse positions.
@@ -492,18 +493,23 @@ class ScreenRenderer:
         Reports if finished is reached (if asset has been load or any user interaction).
         """
         return self._finished
+    
+    def setInfo(self, s):
+        self._nfo = s
 
-    def renderInfo(self, s, height):
+    def renderInfo(self, height):
         """
         Render textual info in the top area.
         """
-        RenderTools.renderText((0.6, 1, 0.6, 1), 5, height - 16, 16, s)
+        if len(self._nfo) > 0:
+            RenderTools.renderText((0.6, 1, 0.6, 1), 5, height - 8, 16, self._nfo)
 
-    def renderDebug(self):
+    def renderDebug(self, width):
         """
         Render text in the lower area.
         """
         if len(self._dbg) > 0:
+            RenderTools.renderRect(preferences().bgColor(), 0, 0, width, self._menuTop)
             RenderTools.renderText((0.6, 0.6, 1, 1), 5, 8, 16, self._dbg)
 
     def scrollArea(self, count, width, height):
@@ -549,6 +555,7 @@ class ScreenRenderer:
         )
 
     def draw(self, width, height):
+        self._nfo = ""
         self._width = width
         self._height = height
         menuHeight = height - self._menuTop
@@ -569,7 +576,7 @@ class ScreenRenderer:
         # Render the menu items.
         if not self._items:
             # Show informational text at the top.
-            self.renderInfo("No items in asset folder, verify path (%s)." % preferences().custom_library_path)
+            self._nfo = "No items in asset folder, verify path (%s)." % preferences().custom_library_path
         else:
             # Render item by item.
             for index, e in enumerate(self._items):
@@ -579,10 +586,11 @@ class ScreenRenderer:
 
         #bgl.glDisable(bgl.GL_SCISSOR_TEST)
 
-        # Render another dark rectangle on top.
+        # Render another dark rectangle on top (info area).
         RenderTools.renderRect(preferences().bgColor(), 0, height - self._menuTop, width, self._menuTop)
-
-        self.renderDebug()
+        self.renderInfo(height)
+        
+        self.renderDebug(width)
 
         # Cleanup render states.
         bgl.glDisable(bgl.GL_BLEND)
@@ -688,11 +696,8 @@ class AssetFlingerExport(Operator, ExportHelper):
     bl_label = "Asset Flinger Model Export"
 
     # Exporter stuff.
-    filename_ext = ".obj"
-    filter_glob = StringProperty(
-            default="*.obj;*.blend",
-            options={'HIDDEN'},
-            )
+    filename_ext = ".blend"
+    filter_glob = StringProperty(default="*.blend", options={'HIDDEN'})
 
     def execute(self, context):
         """
@@ -703,13 +708,13 @@ class AssetFlingerExport(Operator, ExportHelper):
         ###########################################
         # .blend export
 
-        # If the 'export selected' addon is installed ...
-        if exportSelectedInstalled():
-            log("Export as .blend")
-            bpy.ops.export_scene.selected(
-                exporter_str = "BLEND",
-                filepath = basename + ".blend"
-            )
+        # https://docs.blender.org/api/blender_python_api_2_77_1/bpy.types.BlendDataLibraries.html
+        log("Export as .blend")
+        bpy.data.libraries.write(
+            basename + ".blend", 
+            set(bpy.context.selected_objects), 
+            relative_remap = True
+        )
 
         ###########################################
         # .obj export and thumb generation
@@ -771,3 +776,14 @@ def unregister():
 
 if __name__ == "__main__":
     register()
+    
+PYDEV_SOURCE_DIR = "C:\\devel\\apps\\eclipse-neon-pydev\\plugins\\org.python.pydev_5.8.0.201706061859\\pysrc"
+ 
+import sys
+ 
+if PYDEV_SOURCE_DIR not in sys.path:
+    sys.path.append(PYDEV_SOURCE_DIR)
+ 
+import pydevd
+ 
+pydevd.settrace()
