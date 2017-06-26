@@ -137,16 +137,28 @@ def importObject(filename, link):
     log("Import object '%s'" % basename)
 
     # Prefer the blend to .obj.
-    if os.path.exists(basename + ".blend"):
+    blend = basename + ".blend"
+    if os.path.exists(blend):
         log("Use .blend version, link = %s" % repr(link))
-        # https://blender.stackexchange.com/questions/34540/how-to-link-append-a-data-block-using-the-python-api
-        with bpy.data.libraries.load(basename + ".blend", link = link) as (dfrom, dto):
-            dto.objects = dfrom.objects
+#         # https://blender.stackexchange.com/questions/34540/how-to-link-append-a-data-block-using-the-python-api
+#         with bpy.data.libraries.load(basename + ".blend", link = link) as (dfrom, dto):
+#             dto.objects = dfrom.objects
+# 
+#         for obj in dto.objects:
+#             if obj is not None:
+#                 log("  Append: %s" % obj)
+#                 bpy.context.scene.objects.link(obj)
 
-        for obj in dto.objects:
-            if obj is not None:
-                log("  Append: %s" % obj)
-                bpy.context.scene.objects.link(obj)
+        # https://blender.stackexchange.com/questions/34299/appending-with-bpy-data-libraries-load-and-drivers
+        files = []
+        with bpy.data.libraries.load(blend) as (data_from, data_to):
+            for name in data_from.objects:
+                files.append({'name': name})
+
+        if link:
+            bpy.ops.wm.link(directory=blend + "/Object/", files=files)
+        else:
+            bpy.ops.wm.append(directory=blend + "/Object/", files=files)
 
     # Ok hopefully the obj exists.
     elif os.path.exists(basename + ".obj"):
