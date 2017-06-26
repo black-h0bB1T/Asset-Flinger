@@ -42,11 +42,13 @@ from bpy.props import (
     )
 from bpy_extras.io_utils import ExportHelper
 
-# TODO: Link-Append sub-buttons.
+# TODO: Link-Append sub-buttons -> optimize UI and performance.
 # TODO: Better error handling.
 # TODO: Change access to paths of af-things as function.
-# TODO: Standalone version for blend export (remove export selected dependency).
 # TODO: Update author + copyright.
+# TODO: Use blender theme colors? User adjustable.
+# TODO: Optimize thumbnail scene settings for faster generation? Larger previews?
+# TODO: 2-3 presets for thumbnail scene (grayish, silver, ...)
 # TODO: Support multiple asset dirs? Not really useful, could be done file system wise.
 
 # Full path to "\addons\add_mesh_asset_flinger\" -directory
