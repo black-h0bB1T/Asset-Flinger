@@ -20,17 +20,19 @@
 # ##### END GPL LICENSE BLOCK #####
 
 bl_info = {
-        "name": "Asset Flinger",
-        "version": (0, 3),
-        "blender": (2, 78, 0),
-        "location": "View3D > Add > Mesh > Asset Flinger",
-        "description": "Simple Mesh Importer",
-        "category": "Add Mesh"
+    "name": "Asset Flinger",
+    "version": (0, 3),
+    "blender": (2, 78, 0),
+    "location": "View3D > Add > Mesh > Asset Flinger",
+    "description": "Object/Asset collection manager",
+    "category": "Add Mesh"
 }
 
-import subprocess, re, os, threading
+# Python libs.
+import subprocess, re, os, threading, struct, pprint
 
-import bpy, bgl, blf, pprint
+# Blender libs.
+import bpy, bgl, blf
 from bpy.types import AddonPreferences, Operator
 from bpy.props import (
     BoolProperty,
@@ -42,32 +44,26 @@ from bpy.props import (
     )
 from bpy_extras.io_utils import ExportHelper
 
-# TODO: Error about moving object to cursor if linked ...
-# TODO: Use blender theme colors? User adjustable.
-# TODO: Add imported object to undo stack.
-# TODO: Change access to paths of af-things as function.
 # TODO: Optimize thumbnail scene settings for faster generation? Larger previews?
-# TODO: Option to rename and/or center on safe.
-# TODO: 2-3 presets for thumbnail scene (grayish, silver, ...)
+# TODO: 2-3 presets for thumbnail scene (gray, silver, ...)
 # TODO: Update author + copyright.
-# TODO: Better error handling?
-# TODO: Link-Append sub-buttons -> optimize UI and performance.
-# TODO: Support multiple asset dirs? Not really useful, could be done file system wise.
-# TODO: Update previews with a different GUI setting.
+# TODO: Fix git author name.
 
+# FUTURE: How to handle default folder + no thumbnail icon with different themes?
+# FUTURE: Add possibility to re-render thumbs or update theme using a different thumbnail scene.
+# FUTURE: Support multiple asset dirs? Not really useful, could be done file system wise.
+# FUTURE: Render append/link from single components.
+# FUTURE: Performance optimization: Cache several cost intensive calls:
+#         - Theme settings .. 
+#         - Preferences
+# FUTURE: Option to rename and/or center on safe.
+# FUTURE: User adjustable GUI colors, use theme by default (maybe other theme colors then currently?)
+# FUTURE: Better error handling? Were catch errors? User feedback will be helpful.
 
-# Full path to "\addons\add_mesh_asset_flinger\" -directory
-paths = bpy.utils.script_paths("addons")
-
-libraryPath = 'assets'
-for path in paths:
-    libraryPath = os.path.join(path, "add_mesh_asset_flinger")
-    if os.path.exists(libraryPath):
-        break
-
-if not os.path.exists(libraryPath):
-    raise NameError('Did not find assets path from ' + libraryPath)
-libraryIconsPath = os.path.join(libraryPath, "icons")
+# Various functions to access paths inside the addon directory.
+def assetFlingerHome(): return os.path.dirname(__file__)
+def assetFlingerIcons(): return os.path.join(assetFlingerHome(), "icons")
+def assetFlingerThumbnailer(): return os.path.join(assetFlingerHome(), "thumbnailer")
 
 def log(s):
     """
@@ -89,7 +85,7 @@ def execute(cmd):
     for stdout_line in iter(popen.stdout.readline, ""):
         yield stdout_line
     popen.stdout.close()
-    return_code = popen.wait()
+    _ = popen.wait()
     #if return_code:
     #    raise subprocess.CalledProcessError(return_code, cmd)
 
@@ -99,7 +95,7 @@ def createThumbnail(blender, thumbscene, scene, material = ""):
     is required. 'blender' is the path to the blender executable (bpy.app.binary_path).
     'thumbscene' is the scene to place the object in for thumbnail and contains itself some python
     scripting. If 'material' is specified, objects are prepared with the material, which must exist
-    in the 'thumbscene'. Atm the thumbscene is bundled with Asset-Flinger.
+    in the 'thumbscene'. At the moment the thumbscene is bundled with Asset-Flinger.
     """
     log("*** CALL THUMBNAIL GEN ***")
     wm = bpy.context.window_manager
@@ -108,11 +104,11 @@ def createThumbnail(blender, thumbscene, scene, material = ""):
     ptrn = re.compile(".*Path Tracing Sample\\s+(\\d+)/\\d+.*")
     # Run external instance of blender like the original thumbnail generator.
     for l in execute([blender, "-b", thumbscene, "--python-text", "ThumbScript", "--", "obj:" + scene, "mat:" + material]):
-        # Log special prefixed lines (using log/log_object functions in thumnbail scripts).
+        # Log special prefixed lines (using log/log_object functions in thumbnail scripts).
         if l.startswith("[]scr"):
             log(l.strip()[5:])
 
-        # If contains progress analyse and update progress.
+        # If contains progress analyze and update progress.
         pts = ptrn.match(l)
         if pts:
             wm.progress_update(int(pts.group(1)))
@@ -153,7 +149,7 @@ def importObject(filename, link):
 
         # https://blender.stackexchange.com/questions/34299/appending-with-bpy-data-libraries-load-and-drivers
         files = []
-        with bpy.data.libraries.load(blend) as (data_from, data_to):
+        with bpy.data.libraries.load(blend) as (data_from, _):
             for name in data_from.objects:
                 files.append({'name': name})
 
@@ -162,12 +158,15 @@ def importObject(filename, link):
         else:
             bpy.ops.wm.append(directory=blend + "/Object/", files=files)
 
-    # Ok hopefully the obj exists.
+    # OK hopefully the obj exists.
     elif os.path.exists(basename + ".obj"):
         log("Use .obj version")
         bpy.ops.import_scene.obj(filepath=basename + ".obj")
         
-    bpy.ops.view3d.snap_selected_to_cursor()
+    # In case we link, don't move to cursor.
+    if not link:        
+        bpy.ops.view3d.snap_selected_to_cursor()
+        
     bpy.context.scene.objects.active = bpy.context.selected_objects[0]
 
 class RenderTools:
@@ -178,7 +177,7 @@ class RenderTools:
     @staticmethod
     def renderTexture(texture, x, y, width, height):
         bgl.glEnable(bgl.GL_BLEND)
-        bgl.glBlendFunc(bgl.GL_SRC_ALPHA, bgl.GL_ONE_MINUS_SRC_ALPHA)
+        #bgl.glBlendFunc(bgl.GL_SRC_ALPHA, bgl.GL_ONE_MINUS_SRC_ALPHA)
 
         texture.gl_load()
         bgl.glBindTexture(bgl.GL_TEXTURE_2D, texture.bindcode[0])
@@ -229,18 +228,44 @@ class AssetFlingerPreferences(AddonPreferences):
         name="Your Library",
         subtype='FILE_PATH',
         )
+    
+    render_scene = EnumProperty(
+        name="Thumbnail scene",
+        items=[ 
+            ( "Original", "Original thumbnail scene", "Settings from previous version"),
+            ( "Gray", "Gray thumbnail scene", "Pure gray style scene"),
+            ( "Silver", "Silver thumbnail scene", "Asset is rendered in silver metal look"), 
+        ],
+        default="Silver"
+        )
 
     def draw(self, context):
         layout = self.layout
+        
+        row = layout.row()
+        row.prop(self, "custom_library_path")
+        
+        row = layout.row()
+        row.prop(self, "render_scene")
 
-        split = layout.split(percentage=1)
-
-        col = split.column()
-        sub = col.column(align=True)
-        sub.prop(self, "custom_library_path")
-
-        sub.separator()
-
+#         split = layout.split(percentage=1)
+# 
+#         col = split.column()
+#         sub = col.column(align=True)
+#         sub.prop(self, "custom_library_path")
+# 
+#         sub.separator()
+        
+    def thumbnailScenePostfix(self): return self.render_scene;
+        
+    # http://blenderscripting.blogspot.de/2012/09/color-changes-in-ui.html
+    def currentTheme(self):
+        themeName = bpy.context.user_preferences.themes.items()[0][0]
+        return bpy.context.user_preferences.themes[themeName]
+    
+    def currentThemeRadioButton(self):
+        return self.currentTheme().user_interface.wcol_radio
+    
     def iconSize(self): return 128
     def underlayWidth(self): return 180
     def menuItemMargins(self): return 4
@@ -250,9 +275,15 @@ class AssetFlingerPreferences(AddonPreferences):
     def toolTipTextSize(self): return 10
 
     def bgColor(self): return (0, 0, 0, 0.6)
-    def menuColor(self): return (0.447, 0.447, 0.447, 0.8)
-    def menuColorHighlighted(self): return (0.555, 0.555, 0.555, 0.8)
-    def itemTextColor(self): return (0, 0, 0, 0.8)
+    
+#     def menuColor(self): return (0.447, 0.447, 0.447, 0.8)
+#     def menuColorSelected(self): return (0.555, 0.555, 0.555, 0.8)
+#     def itemTextColor(self): return (0, 0, 0, 0.8)
+    
+    def menuColor(self): return (*self.currentThemeRadioButton().inner, 1)
+    def menuColorSelected(self): return (*self.currentThemeRadioButton().inner_sel, 1)
+    def itemTextColor(self): return (*self.currentThemeRadioButton().text, 1)
+    def itemTextColorSelected(self): return (*self.currentThemeRadioButton().text_sel, 1)
 
 class MenuItem:
     """
@@ -293,11 +324,12 @@ class MenuItem:
         texts = p.itemTextSize()
         ttexts = p.toolTipTextSize()
         textc = p.itemTextColor()
+        textcs = p.itemTextColorSelected()
         textx = x + margins + p.underlayWidth()
 
         # Render background triangle.
         RenderTools.renderRect(
-            p.menuColorHighlighted() if isInside else p.menuColor(),
+            p.menuColorSelected() if isInside else p.menuColor(),
             x + margins,
             y + margins,
             w - 2 * margins,
@@ -323,29 +355,37 @@ class MenuItem:
         )
 
         # Render text for asset.
-        RenderTools.renderText(textc, textx, y + 26, texts, self._text)
+        RenderTools.renderText(
+            textcs if isInside else textc, 
+            textx, 
+            y + 26, 
+            texts, 
+            self._text
+        )
 
         if self._assetInfo:
-            full, blendExists, renderer = self._assetInfo
-            info, infoy = "", 0
-
-            RenderTools.renderText((0, 0, 0, 0.3), textx, y + 107, ttexts, "Click to append")
-            if blendExists:
-                RenderTools.renderText((0, 0, 0, 0.3), textx, y + 82, ttexts, "Click to link")
+            _, blendExists, renderer = self._assetInfo
+            append, link = False, False
             
             if isInside:
                 if self.append(mx, my):
+                    append = True
                     renderer.setInfo("Append object '%s' to scene ..." % self._text)
-                    info = "Click to append"
-                    infoy = 107
 
                 if self.link(mx, my):
+                    link = True
                     renderer.setInfo("Link object '%s' to scene ..." % self._text)
-                    info = "Click to link"
-                    infoy = 82
 
-                if len(info) > 0:
-                    RenderTools.renderText(textc, textx, y + infoy, ttexts, info)
+            if append:
+                RenderTools.renderText((*textcs[0:3], 1), textx, y + 107, ttexts, "Click to append")
+            else:
+                RenderTools.renderText((*textcs[0:3], 0.3), textx, y + 107, ttexts, "Click to append")
+                
+            if blendExists:
+                if link:
+                    RenderTools.renderText((*textcs[0:3], 1), textx, y + 82, ttexts, "Click to link")
+                else:
+                    RenderTools.renderText((*textcs[0:3], 0.3), textx, y + 82, ttexts, "Click to link")
 
     def testClick(self, rect, mouse):
         """
@@ -360,13 +400,13 @@ class MenuItem:
             # Check if its a folder entry ..
             if self._folderInfo:
                 # Update menu in renderer.
-                full, level, renderer = self._folderInfo
+                full, _, renderer = self._folderInfo
                 renderer.setMenuItems(MenuItem.buildListForFolder(*self._folderInfo))
             elif self._assetInfo:
                 # If this is an asset, import, link or whatever.
-                full, blendExists, renderer = self._assetInfo
+                full, _, renderer = self._assetInfo
 
-                # Device wether append or link (if supported).
+                # Decide whether append or link (if supported).
                 if self.append(mx, my):
                     importObject(full, False)
                     renderer.setFinished()
@@ -452,11 +492,11 @@ class ScreenRenderer:
         self._specificIcons = []
 
         # Some icons for multiple uses.
-        self._folderIcon = self.loadIcon(os.path.join(libraryIconsPath, "folder.png"), True)
-        self._noThumbnailIcon = self.loadIcon(os.path.join(libraryIconsPath, "nothumbnail.png"), True)
-        self._decoObjIcon = self.loadIcon(os.path.join(libraryIconsPath, "button-decoration-obj.png"), True)
-        self._decoBlendIcon = self.loadIcon(os.path.join(libraryIconsPath, "button-decoration-blend.png"), True)
-        self._decoDirIcon = self.loadIcon(os.path.join(libraryIconsPath, "button-decoration-dir.png"), True)
+        self._folderIcon = self.loadIcon(os.path.join(assetFlingerIcons(), "folder.png"), True)
+        self._noThumbnailIcon = self.loadIcon(os.path.join(assetFlingerIcons(), "nothumbnail.png"), True)
+        self._decoObjIcon = self.loadIcon(os.path.join(assetFlingerIcons(), "button-decoration-obj.png"), True)
+        self._decoBlendIcon = self.loadIcon(os.path.join(assetFlingerIcons(), "button-decoration-blend.png"), True)
+        self._decoDirIcon = self.loadIcon(os.path.join(assetFlingerIcons(), "button-decoration-dir.png"), True)
 
     def loadIcon(self, path, generic):
         """
@@ -524,7 +564,7 @@ class ScreenRenderer:
         Render textual info in the top area.
         """
         if len(self._nfo) > 0:
-            RenderTools.renderText((0.6, 1, 0.6, 1), 5, height - 8, 16, self._nfo)
+            RenderTools.renderText((0.8, 0.8, 0.8, 1), 5, height - 8, 16, self._nfo)
 
     def renderDebug(self, width):
         """
@@ -534,7 +574,7 @@ class ScreenRenderer:
             RenderTools.renderRect(preferences().bgColor(), 0, 0, width, self._menuTop)
             RenderTools.renderText((0.6, 0.6, 1, 1), 5, 8, 16, self._dbg)
 
-    def scrollArea(self, count, width, height):
+    def scrollArea(self, _, width, height):
         """
         Total height of all menu items. Used to determine scroll area.
         """
@@ -548,13 +588,11 @@ class ScreenRenderer:
             return 0
         return maxHeight - displayHeight
 
-    def calcMenuItemRect(self, index, count, width, height):
+    def calcMenuItemRect(self, index, _, width, height):
         """
         Based on valid area size, return the position of item number 'index', if count items should be rendered.
         """
-        count = len(self._items)
         itemsPerLine = round(width / preferences().menuItemWidth())
-        lines = round(count / itemsPerLine) + (1 if (count % itemsPerLine) != 0 else 0)
         effectiveItemWidth = width / itemsPerLine
 
         col = index % itemsPerLine
@@ -577,10 +615,9 @@ class ScreenRenderer:
         )
 
     def draw(self, width, height):
-        self._nfo = ""
+        self._nfo = "Press ESC or RMB to cancel ..."
         self._width = width
         self._height = height
-        menuHeight = height - self._menuTop
 
         # Render the background darker.
         RenderTools.renderRect(preferences().bgColor(), 0, 0, width, height)
@@ -659,6 +696,7 @@ class AssetFlingerMenu(Operator):
     """
     bl_idname = "view3d.asset_flinger"
     bl_label = "Asset Flinger"
+    bl_options = {'REGISTER', 'UNDO'}
 
     def __init__(self):
         self._renderer = None
@@ -716,6 +754,7 @@ class AssetFlingerExport(Operator, ExportHelper):
     """
     bl_idname = "export.asset_flinger"
     bl_label = "Asset Flinger Model Export"
+    bl_options = {'REGISTER'}
 
     # Exporter stuff.
     filename_ext = ".blend"
@@ -752,7 +791,7 @@ class AssetFlingerExport(Operator, ExportHelper):
         log("Create thumbnail.")
         createThumbnail(
             bpy.app.binary_path,
-            os.path.join(libraryPath, "thumbnailer/Thumbnailer.blend"),
+            os.path.join(assetFlingerThumbnailer(), "Thumbnailer" + preferences().thumbnailScenePostfix() + ".blend"),
             objPath(self.properties.filepath)
         )
 
@@ -797,13 +836,9 @@ def unregister():
 if __name__ == "__main__":
     register()
     
-PYDEV_SOURCE_DIR = "C:\\devel\\apps\\eclipse-neon-pydev\\plugins\\org.python.pydev_5.8.0.201706061859\\pysrc"
- 
-import sys
- 
-if PYDEV_SOURCE_DIR not in sys.path:
-    sys.path.append(PYDEV_SOURCE_DIR)
- 
-import pydevd
- 
-#pydevd.settrace()
+# PYDEV_SOURCE_DIR = "C:\\devel\\apps\\eclipse-neon-pydev\\plugins\\org.python.pydev_5.8.0.201706061859\\pysrc"
+# import sys
+# if PYDEV_SOURCE_DIR not in sys.path:
+#     sys.path.append(PYDEV_SOURCE_DIR)
+# import pydevd
+# pydevd.settrace()

@@ -92,21 +92,13 @@ def generate():
         CAMERAS.scale = (camScale,camScale,camScale)
         CAMERAS.location = (0,0,dimZ)
 
-        # Make smooth, add SubSurf modifier and increase subdivisions
+        # Make smooth.
         bpy.ops.object.shade_smooth()
-        #bpy.ops.object.modifier_add(type='SUBSURF')
-        #OBJ.modifiers["Subsurf"].levels = 3
-
-        # Apply SubSurf modifier
-        # bpy.ops.object.modifier_apply(apply_as='DATA', modifier="Subsurf")
-
-        # Assign existing METAL material to OBJ (Commented out to preserve the .OBJ material colors that are defined in the optional .MTL file)
-        # METAL = bpy.data.materials['metal']
-        # bpy.context.active_object.active_material = METAL
-
+        
         # Assign material to it?
-        for mat in bpy.data.materials:
-            log(" -> avail mat: " + mat.name)
+        #for mat in bpy.data.materials:
+        #    log(" -> avail mat: " + mat.name)
+        material = "material"
         if len(material) > 0:
             log("Assign material '" + material + "'")
             for ob in bpy.context.selected_editable_objects:
