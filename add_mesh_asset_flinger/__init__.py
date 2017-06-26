@@ -42,7 +42,6 @@ from bpy.props import (
     )
 from bpy_extras.io_utils import ExportHelper
 
-# TODO: "Bridge" asset bug
 # TODO: Error about moving object to cursor if linked ...
 # TODO: Use blender theme colors? User adjustable.
 # TODO: Add imported object to undo stack.
@@ -75,6 +74,9 @@ def log(s):
     Central log fn, lets modify logging behavior in a single place.
     """
     print("[asset-flinger, %5i] - %s" % (threading.get_ident(), s))
+    
+def objPath(path): return os.path.splitext(path)[0] + ".obj"
+def blendPath(path): return os.path.splitext(path)[0] + ".blend"     
 
 # https://stackoverflow.com/questions/4417546/constantly-print-subprocess-output-while-process-is-running
 def execute(cmd):
@@ -723,15 +725,13 @@ class AssetFlingerExport(Operator, ExportHelper):
         """
         This gets called after user has selected a file for export.
         """
-        basename, _ = os.path.splitext(self.properties.filepath)
-
         ###########################################
         # .blend export
 
         # https://docs.blender.org/api/blender_python_api_2_77_1/bpy.types.BlendDataLibraries.html
         log("Export as .blend")
         bpy.data.libraries.write(
-            basename + ".blend", 
+            blendPath(self.properties.filepath), 
             set(bpy.context.selected_objects), 
             relative_remap = True
         )
@@ -742,7 +742,7 @@ class AssetFlingerExport(Operator, ExportHelper):
         # Write wavefront obj to file.
         log("Export as .obj");
         bpy.ops.export_scene.obj(
-            filepath = basename + ".obj",
+            filepath = objPath(self.properties.filepath),
             use_selection = True,
             use_mesh_modifiers = True,
             use_materials = False
@@ -753,7 +753,7 @@ class AssetFlingerExport(Operator, ExportHelper):
         createThumbnail(
             bpy.app.binary_path,
             os.path.join(libraryPath, "thumbnailer/Thumbnailer.blend"),
-            self.properties.filepath
+            objPath(self.properties.filepath)
         )
 
         ###########################################
