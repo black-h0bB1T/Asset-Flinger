@@ -42,14 +42,20 @@ from bpy.props import (
     )
 from bpy_extras.io_utils import ExportHelper
 
-# TODO: Link-Append sub-buttons -> optimize UI and performance.
-# TODO: Better error handling.
-# TODO: Change access to paths of af-things as function.
-# TODO: Update author + copyright.
+# TODO: "Bridge" asset bug
+# TODO: Error about moving object to cursor if linked ...
 # TODO: Use blender theme colors? User adjustable.
+# TODO: Add imported object to undo stack.
+# TODO: Change access to paths of af-things as function.
 # TODO: Optimize thumbnail scene settings for faster generation? Larger previews?
+# TODO: Option to rename and/or center on safe.
 # TODO: 2-3 presets for thumbnail scene (grayish, silver, ...)
+# TODO: Update author + copyright.
+# TODO: Better error handling?
+# TODO: Link-Append sub-buttons -> optimize UI and performance.
 # TODO: Support multiple asset dirs? Not really useful, could be done file system wise.
+# TODO: Update previews with a different GUI setting.
+
 
 # Full path to "\addons\add_mesh_asset_flinger\" -directory
 paths = bpy.utils.script_paths("addons")
@@ -788,4 +794,4 @@ if PYDEV_SOURCE_DIR not in sys.path:
  
 import pydevd
  
-pydevd.settrace()
+#pydevd.settrace()
