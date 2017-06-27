@@ -1,19 +1,17 @@
 # ##### BEGIN GPL LICENSE BLOCK #####
 #
-#  Copyright (C) 2014 Blender Aid
-#  http://www.blendearaid.com
-#  blenderaid@gmail.com
-
+#  Copyright (C) 2014-2017 script authors.
+#
 #  This program is free software: you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
 #  the Free Software Foundation, either version 3 of the License, or
 #  (at your option) any later version.
-
+#
 #  This program is distributed in the hope that it will be useful,
 #  but WITHOUT ANY WARRANTY; without even the implied warranty of
 #  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 #  GNU General Public License for more details.
-
+#
 #  You should have received a copy of the GNU General Public License
 #  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
@@ -31,7 +29,7 @@ bl_info = {
 }
 
 # Python libs.
-import subprocess, re, os, threading, struct, pprint
+import sys, subprocess, re, os, threading, struct, pprint
 
 # Blender libs.
 import bpy, bgl, blf
@@ -45,9 +43,6 @@ from bpy.props import (
     StringProperty
     )
 from bpy_extras.io_utils import ExportHelper
-
-# TODO: Optimize thumbnail scene settings for faster generation? Larger previews?
-# TODO: 2-3 presets for thumbnail scene (gray, silver, ...)
 
 # FUTURE: How to handle default folder + no thumbnail icon with different themes?
 # FUTURE: Add possibility to re-render thumbs or update theme using a different thumbnail scene.
@@ -96,7 +91,7 @@ def createThumbnail(scene):
     """
     log("*** CALL THUMBNAIL GEN ***")
     blenderExecutable = bpy.app.binary_path
-    thumbscene = os.path.join(assetFlingerThumbnailer(), "Thumbnailer" + preferences().thumbnailScenePostfix() + ".blend"),
+    thumbscene = os.path.join(assetFlingerThumbnailer(), "Thumbnailer" + preferences().thumbnailScenePostfix() + ".blend")
 
     # Parse 'Tracing Sample' output to show as progress.
     ptrn = re.compile(".*Path Tracing Sample\\s+(\\d+)/\\d+.*")
@@ -104,24 +99,29 @@ def createThumbnail(scene):
     wm.progress_begin(0, 300)
     
     # Run external instance of blender like the original thumbnail generator.
-    for l in execute([
+    cmd = [
         blenderExecutable, 
         "-b", thumbscene, 
         "--python-text", "ThumbScript", 
         "--", 
         "obj:" + scene, 
         "size:" + preferences().thumbnailRenderSize()
-        ]):
+        ]
+    log(repr(cmd))
+    
+    for l in execute(cmd):
         # Log special prefixed lines (using log/log_object functions in thumbnail scripts).
-        if l.startswith("[]scr"):
+        if l.startswith("[log]"):
             log(l.strip()[5:])
 
         # If contains progress analyze and update progress.
         pts = ptrn.match(l)
         if pts:
             wm.progress_update(int(pts.group(1)))
-            #print(float(pts.group(1))/3)
+            sys.stdout.write("\r%f %%" % (float(pts.group(1))/3))
+            sys.stdout.flush()
 
+    print("")
     wm.progress_end()
 
 def preferences():
@@ -266,7 +266,7 @@ class AssetFlingerPreferences(AddonPreferences):
         layout.row().prop(self, "thumbnail_render_size")
 
     def thumbnailScenePostfix(self): return self.render_scene
-    def thumbnailRenderSize(self): return int(self.thumbnail_render_size)
+    def thumbnailRenderSize(self): return self.thumbnail_render_size
         
     # http://blenderscripting.blogspot.de/2012/09/color-changes-in-ui.html
     def currentTheme(self):
