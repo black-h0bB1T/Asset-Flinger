@@ -21,11 +21,13 @@
 
 bl_info = {
     "name": "Asset Flinger",
+    "author": "Manu Jarvinen/BlenderAid, h0bB1T",
     "version": (0, 3),
     "blender": (2, 78, 0),
     "location": "View3D > Add > Mesh > Asset Flinger",
     "description": "Object/Asset collection manager",
-    "category": "Add Mesh"
+    "category": "Add Mesh",
+    "wiki_url": "https://github.com/BlenderAid/Asset-Flinger",
 }
 
 # Python libs.
@@ -46,8 +48,6 @@ from bpy_extras.io_utils import ExportHelper
 
 # TODO: Optimize thumbnail scene settings for faster generation? Larger previews?
 # TODO: 2-3 presets for thumbnail scene (gray, silver, ...)
-# TODO: Update author + copyright.
-# TODO: Fix git author name.
 
 # FUTURE: How to handle default folder + no thumbnail icon with different themes?
 # FUTURE: Add possibility to re-render thumbs or update theme using a different thumbnail scene.
@@ -89,21 +89,29 @@ def execute(cmd):
     #if return_code:
     #    raise subprocess.CalledProcessError(return_code, cmd)
 
-def createThumbnail(blender, thumbscene, scene, material = ""):
+def createThumbnail(scene):
     """
-    Used to create the thumbnail for the obj object specified in parameter 'scene', full path
-    is required. 'blender' is the path to the blender executable (bpy.app.binary_path).
-    'thumbscene' is the scene to place the object in for thumbnail and contains itself some python
-    scripting. If 'material' is specified, objects are prepared with the material, which must exist
-    in the 'thumbscene'. At the moment the thumbscene is bundled with Asset-Flinger.
+    Used to create the thumbnail for the object specified in parameter 'scene', full path
+    is required. 
     """
     log("*** CALL THUMBNAIL GEN ***")
-    wm = bpy.context.window_manager
-    # Parse Tracing Sample to show as progress.
-    wm.progress_begin(0, 300)
+    blenderExecutable = bpy.app.binary_path
+    thumbscene = os.path.join(assetFlingerThumbnailer(), "Thumbnailer" + preferences().thumbnailScenePostfix() + ".blend"),
+
+    # Parse 'Tracing Sample' output to show as progress.
     ptrn = re.compile(".*Path Tracing Sample\\s+(\\d+)/\\d+.*")
+    wm = bpy.context.window_manager
+    wm.progress_begin(0, 300)
+    
     # Run external instance of blender like the original thumbnail generator.
-    for l in execute([blender, "-b", thumbscene, "--python-text", "ThumbScript", "--", "obj:" + scene, "mat:" + material]):
+    for l in execute([
+        blenderExecutable, 
+        "-b", thumbscene, 
+        "--python-text", "ThumbScript", 
+        "--", 
+        "obj:" + scene, 
+        "size:" + preferences().thumbnailRenderSize()
+        ]):
         # Log special prefixed lines (using log/log_object functions in thumbnail scripts).
         if l.startswith("[]scr"):
             log(l.strip()[5:])
@@ -119,6 +127,7 @@ def createThumbnail(blender, thumbscene, scene, material = ""):
 def preferences():
     """
     Return the instance of the AF user preferences.
+    :rtype AssetFlingerPreferences
     """
     return bpy.context.user_preferences.addons[__name__].preferences
 
@@ -225,7 +234,7 @@ class AssetFlingerPreferences(AddonPreferences):
     bl_idname = __name__
 
     custom_library_path = StringProperty(
-        name="Your Library",
+        name="Asset library path",
         subtype='FILE_PATH',
         )
     
@@ -238,25 +247,26 @@ class AssetFlingerPreferences(AddonPreferences):
         ],
         default="Silver"
         )
+    
+    thumbnail_render_size = EnumProperty(
+        name="Thumbnail render size",
+        items=[
+            ( "64", "64x64", "Very small" ),
+            ( "128", "128x128", "Optimal size" ),
+            ( "256", "256x256", "Slow to render, much details"),
+        ],
+        default="128"
+        )
 
     def draw(self, context):
         layout = self.layout
         
-        row = layout.row()
-        row.prop(self, "custom_library_path")
-        
-        row = layout.row()
-        row.prop(self, "render_scene")
+        layout.row().prop(self, "custom_library_path")
+        layout.row().prop(self, "render_scene")
+        layout.row().prop(self, "thumbnail_render_size")
 
-#         split = layout.split(percentage=1)
-# 
-#         col = split.column()
-#         sub = col.column(align=True)
-#         sub.prop(self, "custom_library_path")
-# 
-#         sub.separator()
-        
-    def thumbnailScenePostfix(self): return self.render_scene;
+    def thumbnailScenePostfix(self): return self.render_scene
+    def thumbnailRenderSize(self): return int(self.thumbnail_render_size)
         
     # http://blenderscripting.blogspot.de/2012/09/color-changes-in-ui.html
     def currentTheme(self):
@@ -320,14 +330,14 @@ class MenuItem:
         p = preferences()
         margins = p.menuItemMargins()
         iconSize = p.iconSize()
-
+        
         texts = p.itemTextSize()
         ttexts = p.toolTipTextSize()
         textc = p.itemTextColor()
         textcs = p.itemTextColorSelected()
         textx = x + margins + p.underlayWidth()
 
-        # Render background triangle.
+        # Render background rectangle.
         RenderTools.renderRect(
             p.menuColorSelected() if isInside else p.menuColor(),
             x + margins,
@@ -790,8 +800,6 @@ class AssetFlingerExport(Operator, ExportHelper):
         # Run thumbnail generator for this .obj.
         log("Create thumbnail.")
         createThumbnail(
-            bpy.app.binary_path,
-            os.path.join(assetFlingerThumbnailer(), "Thumbnailer" + preferences().thumbnailScenePostfix() + ".blend"),
             objPath(self.properties.filepath)
         )
 

@@ -4,9 +4,9 @@
 #
 # -------------------------------------------------------------
 
+import os, sys, time
+
 import bpy
-import os, sys
-import time
 
 # Trick to pass though some log messages (filtered in stdout parser from calling script).
 def log(s):
@@ -17,13 +17,14 @@ def log_object(o):
 
 def generate():
     log("### START THUMBNAIL GEN ############################")
+    
     #log_object(sys.argv)
     dragAndDropFilename, material = "", ""
     for arg in sys.argv:
         if arg.startswith("obj:"):
             dragAndDropFilename = arg[4:]
-        if arg.startswith("mat:"):
-            material = arg[4:]
+        if arg.startswith("size:"):
+            size = arg[5:]
 
     log("Starting to generate: " + dragAndDropFilename)
     files = []
