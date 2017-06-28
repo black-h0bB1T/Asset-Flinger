@@ -28,6 +28,18 @@ bl_info = {
     "wiki_url": "https://github.com/BlenderAid/Asset-Flinger",
 }
 
+# FUTURE: Asset batch generation? (Select folder with blends, the generator extracts every object as asset, useful?)
+# FUTURE: How to handle default folder + no thumbnail icon with different themes?
+# FUTURE: Add possibility to re-render thumbs or update theme using a different thumbnail scene.
+# FUTURE: Support multiple asset dirs? Not really useful, could be done file system wise.
+# FUTURE: Render append/link from single components.
+# FUTURE: Performance optimization: Cache several cost intensive calls:
+#         - Theme settings .. 
+#         - Preferences
+# FUTURE: Option to rename and/or center on safe.
+# FUTURE: User adjustable GUI colors, use theme by default (maybe other theme colors then currently?)
+# FUTURE: Better error handling? Were catch errors? User feedback will be helpful.
+
 # Python libs.
 import sys, subprocess, re, os, threading, struct, pprint
 
@@ -43,17 +55,6 @@ from bpy.props import (
     StringProperty
     )
 from bpy_extras.io_utils import ExportHelper
-
-# FUTURE: How to handle default folder + no thumbnail icon with different themes?
-# FUTURE: Add possibility to re-render thumbs or update theme using a different thumbnail scene.
-# FUTURE: Support multiple asset dirs? Not really useful, could be done file system wise.
-# FUTURE: Render append/link from single components.
-# FUTURE: Performance optimization: Cache several cost intensive calls:
-#         - Theme settings .. 
-#         - Preferences
-# FUTURE: Option to rename and/or center on safe.
-# FUTURE: User adjustable GUI colors, use theme by default (maybe other theme colors then currently?)
-# FUTURE: Better error handling? Were catch errors? User feedback will be helpful.
 
 # Various functions to access paths inside the addon directory.
 def assetFlingerHome(): return os.path.dirname(__file__)
@@ -225,14 +226,33 @@ class RenderTools:
         blf.position(font_id, x, y - size / 2, 0)
         blf.size(font_id, size, dpi)
         blf.draw(font_id, text)
-
+        
+class AssetFlingerStatus:
+    """
+    Stores values throughout the running session.
+    """
+    def __init__(self):
+        self._exportPath = ""
+        self._lastLocation = None 
+    
+    # Last file system export path. Used as default when exporting.
+    def exportPath(self): return preferences().custom_library_path if not self._exportPath else self._exportPath
+    def setExportPath(self, p): self._exportPath = p
+    
+    # Last location in the OSD menu: (path, level).
+    def lastLocation(self): return (self.exportPath(), 0) if not self._lastLocation else self._lastLocation
+    def setLastLocation(self, l): self._lastLocation = l
+    
+__status = AssetFlingerStatus()
+def status(): return __status
+        
 class AssetFlingerPreferences(AddonPreferences):
     """
     Preferences from addons menu. In addition, contains all information used
     for visualization. So it could easily be enhanced for visual settings.
     """
     bl_idname = __name__
-
+    
     custom_library_path = StringProperty(
         name="Asset library path",
         subtype='FILE_PATH',
@@ -257,17 +277,17 @@ class AssetFlingerPreferences(AddonPreferences):
         ],
         default="128"
         )
-
+    
     def draw(self, context):
         layout = self.layout
         
         layout.row().prop(self, "custom_library_path")
         layout.row().prop(self, "render_scene")
         layout.row().prop(self, "thumbnail_render_size")
-
+        
     def thumbnailScenePostfix(self): return self.render_scene
     def thumbnailRenderSize(self): return self.thumbnail_render_size
-        
+    
     # http://blenderscripting.blogspot.de/2012/09/color-changes-in-ui.html
     def currentTheme(self):
         themeName = bpy.context.user_preferences.themes.items()[0][0]
@@ -294,18 +314,31 @@ class AssetFlingerPreferences(AddonPreferences):
     def menuColorSelected(self): return (*self.currentThemeRadioButton().inner_sel, 1)
     def itemTextColor(self): return (*self.currentThemeRadioButton().text, 1)
     def itemTextColorSelected(self): return (*self.currentThemeRadioButton().text_sel, 1)
+    
+class ItemInfo:
+    """
+    Any entry in the OSD menu.    
+    """
+    def __init__(self, isFolder, renderer, level, fullpath, blendExists = False):
+        self.isFolder = isFolder
+        self.renderer = renderer
+        self.level = level
+        self.fullpath = fullpath
+        self.blendExists = blendExists
 
 class MenuItem:
     """
     Represents an existing asset or folder. Handles drawing of the visual representation
     as well as every user interaction with it.
     """
-    def __init__(self, texture, deco, text, folderInfo = None, assetInfo = None):
+    def __init__(self, texture, deco, text, itemInfo):
+        """
+        :type itemInfo: ItemInfo 
+        """
         self._texture = texture
         self._deco = deco
         self._text = text
-        self._folderInfo = folderInfo
-        self._assetInfo = assetInfo
+        self._itemInfo = itemInfo
 
     def append(self, x, y):
         """
@@ -317,7 +350,7 @@ class MenuItem:
         """
         Check relative mouse position for link area (false for obj).
         """
-        return self._assetInfo[1] and y > 70 and y < 95
+        return self._itemInfo.blendExists and y > 70 and y < 95
 
     def draw(self, rect, mouse):
         """
@@ -373,25 +406,24 @@ class MenuItem:
             self._text
         )
 
-        if self._assetInfo:
-            _, blendExists, renderer = self._assetInfo
+        if not self._itemInfo.isFolder:
             append, link = False, False
             
             if isInside:
                 if self.append(mx, my):
                     append = True
-                    renderer.setInfo("Append object '%s' to scene ..." % self._text)
+                    self._itemInfo.renderer.setInfo("Append object '%s' to scene ..." % self._text)
 
                 if self.link(mx, my):
                     link = True
-                    renderer.setInfo("Link object '%s' to scene ..." % self._text)
+                    self._itemInfo.renderer.setInfo("Link object '%s' to scene ..." % self._text)
 
             if append:
                 RenderTools.renderText((*textcs[0:3], 1), textx, y + 107, ttexts, "Click to append")
             else:
                 RenderTools.renderText((*textcs[0:3], 0.3), textx, y + 107, ttexts, "Click to append")
                 
-            if blendExists:
+            if self._itemInfo.blendExists:
                 if link:
                     RenderTools.renderText((*textcs[0:3], 1), textx, y + 82, ttexts, "Click to link")
                 else:
@@ -408,22 +440,33 @@ class MenuItem:
         # If clicked inside this instance ...
         if isInside:
             # Check if its a folder entry ..
-            if self._folderInfo:
+            if self._itemInfo.isFolder:
                 # Update menu in renderer.
-                full, _, renderer = self._folderInfo
-                renderer.setMenuItems(MenuItem.buildListForFolder(*self._folderInfo))
-            elif self._assetInfo:
+                self._itemInfo.renderer.setMenuItems(
+                    MenuItem.buildListForFolder(
+                        self._itemInfo.fullpath,
+                        self._itemInfo.level,
+                        self._itemInfo.renderer
+                    )
+                )
+            else:
                 # If this is an asset, import, link or whatever.
-                full, _, renderer = self._assetInfo
-
                 # Decide whether append or link (if supported).
+                imported = False
                 if self.append(mx, my):
-                    importObject(full, False)
-                    renderer.setFinished()
+                    imported = True
+                    importObject(self._itemInfo.fullpath, False)
 
                 if self.link(mx, my):
-                    importObject(full, True)
-                    renderer.setFinished()
+                    imported = True
+                    importObject(self._itemInfo.fullpath, True)
+                    
+                if imported:
+                    status().setLastLocation((
+                        os.path.split(self._itemInfo.fullpath)[0],
+                        self._itemInfo.level
+                    ))
+                    self._itemInfo.renderer.setFinished()
 
     @staticmethod
     def buildListForFolder(path, level, renderer):
@@ -437,7 +480,7 @@ class MenuItem:
                 renderer.folderIcon(),
                 renderer.decoDirIcon(),
                 "..",
-                folderInfo = (os.path.abspath(os.path.join(path, os.pardir)), level - 1, renderer)
+                ItemInfo(True, renderer, level - 1, os.path.abspath(os.path.join(path, os.pardir)))
             ))
 
         # Folders first ...
@@ -448,23 +491,23 @@ class MenuItem:
                     renderer.folderIcon(),
                     renderer.decoDirIcon(),
                     e,
-                    folderInfo = (full, level + 1, renderer)
+                    ItemInfo(True, renderer, level + 1, full)
                 ))
 
         for e in sorted(os.listdir(path)):
             full = os.path.join(path, e)
             basename, ext = os.path.splitext(full)
             if ext.lower() == ".obj":
-                iconImage = basename + ".png"
-                icon = renderer.loadIcon(iconImage, False) if os.path.exists(iconImage) else renderer.noThumbnailIcon()
-                blendExists = os.path.exists(basename + ".blend")
-                deco = renderer.decoBlendIcon() if blendExists else renderer.decoObjIcon()
                 if not os.path.isdir(full):
+                    iconImage = basename + ".png"
+                    icon = renderer.loadIcon(iconImage, False) if os.path.exists(iconImage) else renderer.noThumbnailIcon()
+                    blendExists = os.path.exists(basename + ".blend")
+                    deco = renderer.decoBlendIcon() if blendExists else renderer.decoObjIcon()
                     r.append(MenuItem(
                         icon,
                         deco,
                         os.path.basename(basename),
-                        assetInfo = (full, blendExists, renderer)
+                        ItemInfo(False, renderer, level, full, blendExists)
                     ))
 
         return r
@@ -742,9 +785,8 @@ class AssetFlingerMenu(Operator):
         # Only this area type is supported.
         if context.area.type == 'VIEW_3D':
             self._renderer = ScreenRenderer()
-            assets = preferences().custom_library_path
-            if len(assets) > 0:
-                self._renderer.setMenuItems(MenuItem.buildListForFolder(assets, 0, self._renderer))
+            if preferences().custom_library_path:
+                self._renderer.setMenuItems(MenuItem.buildListForFolder(*status().lastLocation(), self._renderer))
             self._handle = bpy.types.SpaceView3D.draw_handler_add(self.drawCallback, (context, ), 'WINDOW', 'POST_PIXEL')
             context.window_manager.modal_handler_add(self)
             return {'RUNNING_MODAL'}
@@ -763,19 +805,25 @@ class AssetFlingerExport(Operator, ExportHelper):
     Manages all export related tasks. Uses ExportHelper for export file selection.
     """
     bl_idname = "export.asset_flinger"
-    bl_label = "Asset Flinger Model Export"
+    bl_label = "Export Model"
     bl_options = {'REGISTER'}
 
     # Exporter stuff.
     filename_ext = ".blend"
     filter_glob = StringProperty(default="*.blend", options={'HIDDEN'})
-
+    
+    def invoke(self, context, event):
+        # Set startup path.
+        # Slash at the end required, otherwise last element is treated as file name suggestion.
+        self.properties.filepath = os.path.normpath(status().exportPath()) + "/" 
+        return super().invoke(context, event)
+    
     def execute(self, context):
         """
         This gets called after user has selected a file for export.
         """
-        ###########################################
-        # .blend export
+        # Store for next invocation.
+        status().setExportPath(os.path.split(self.properties.filepath)[0])
 
         # https://docs.blender.org/api/blender_python_api_2_77_1/bpy.types.BlendDataLibraries.html
         log("Export as .blend")
@@ -784,9 +832,6 @@ class AssetFlingerExport(Operator, ExportHelper):
             set(bpy.context.selected_objects), 
             relative_remap = True
         )
-
-        ###########################################
-        # .obj export and thumb generation
 
         # Write wavefront obj to file.
         log("Export as .obj");
@@ -803,9 +848,8 @@ class AssetFlingerExport(Operator, ExportHelper):
             objPath(self.properties.filepath)
         )
 
-        ###########################################
-        # Done
         log("Completed.")
+        
         return {'FINISHED'}
 
 # store keymaps here to access after registration
@@ -844,9 +888,3 @@ def unregister():
 if __name__ == "__main__":
     register()
     
-# PYDEV_SOURCE_DIR = "C:\\devel\\apps\\eclipse-neon-pydev\\plugins\\org.python.pydev_5.8.0.201706061859\\pysrc"
-# import sys
-# if PYDEV_SOURCE_DIR not in sys.path:
-#     sys.path.append(PYDEV_SOURCE_DIR)
-# import pydevd
-# pydevd.settrace()
