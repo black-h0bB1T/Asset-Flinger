@@ -288,6 +288,8 @@ class AssetFlingerPreferences(AddonPreferences):
     def thumbnailScenePostfix(self): return self.render_scene
     def thumbnailRenderSize(self): return self.thumbnail_render_size
     
+    def preferAppendToLink(self): return True
+    
     # http://blenderscripting.blogspot.de/2012/09/color-changes-in-ui.html
     def currentTheme(self):
         themeName = bpy.context.user_preferences.themes.items()[0][0]
@@ -340,18 +342,6 @@ class MenuItem:
         self._text = text
         self._itemInfo = itemInfo
 
-    def append(self, x, y):
-        """
-        Check relative mouse position for appending area.
-        """
-        return y > 95 and y < 120
-
-    def link(self, x, y):
-        """
-        Check relative mouse position for link area (false for obj).
-        """
-        return self._itemInfo.blendExists and y > 70 and y < 95
-
     def draw(self, rect, mouse):
         """
         Draws the menu item in the given rect.
@@ -365,7 +355,6 @@ class MenuItem:
         iconSize = p.iconSize()
         
         texts = p.itemTextSize()
-        ttexts = p.toolTipTextSize()
         textc = p.itemTextColor()
         textcs = p.itemTextColorSelected()
         textx = x + margins + p.underlayWidth()
@@ -406,30 +395,16 @@ class MenuItem:
             self._text
         )
 
-        if not self._itemInfo.isFolder:
-            append, link = False, False
-            
-            if isInside:
-                if self.append(mx, my):
-                    append = True
-                    self._itemInfo.renderer.setInfo("Append object '%s' to scene ..." % self._text)
-
-                if self.link(mx, my):
-                    link = True
-                    self._itemInfo.renderer.setInfo("Link object '%s' to scene ..." % self._text)
-
-            if append:
-                RenderTools.renderText((*textcs[0:3], 1), textx, y + 107, ttexts, "Click to append")
-            else:
-                RenderTools.renderText((*textcs[0:3], 0.3), textx, y + 107, ttexts, "Click to append")
-                
+        if not self._itemInfo.isFolder and isInside:
             if self._itemInfo.blendExists:
-                if link:
-                    RenderTools.renderText((*textcs[0:3], 1), textx, y + 82, ttexts, "Click to link")
+                if preferences().preferAppendToLink():
+                    self._itemInfo.renderer.setInfo("Append object '%s' to scene (Ctrl-Click to Link) ..." % self._text)
                 else:
-                    RenderTools.renderText((*textcs[0:3], 0.3), textx, y + 82, ttexts, "Click to link")
+                    self._itemInfo.renderer.setInfo("Link object '%s' to scene (Ctrl-Click to Append) ..." % self._text)
+            else:
+                self._itemInfo.renderer.setInfo("Append object '%s' to scene ..." % self._text)
 
-    def testClick(self, rect, mouse):
+    def testClick(self, rect, mouse, alternative):
         """
         Handle user click, can be everywhere!
         """
@@ -451,22 +426,19 @@ class MenuItem:
                 )
             else:
                 # If this is an asset, import, link or whatever.
+                
                 # Decide whether append or link (if supported).
-                imported = False
-                if self.append(mx, my):
-                    imported = True
-                    importObject(self._itemInfo.fullpath, False)
-
-                if self.link(mx, my):
-                    imported = True
-                    importObject(self._itemInfo.fullpath, True)
+                link = False
+                if self._itemInfo.blendExists:
+                    link = (preferences().preferAppendToLink() and alternative)
                     
-                if imported:
-                    status().setLastLocation((
-                        os.path.split(self._itemInfo.fullpath)[0],
-                        self._itemInfo.level
-                    ))
-                    self._itemInfo.renderer.setFinished()
+                importObject(self._itemInfo.fullpath, link)
+                
+                status().setLastLocation((
+                    os.path.split(self._itemInfo.fullpath)[0],
+                    self._itemInfo.level
+                ))
+                self._itemInfo.renderer.setFinished()
 
     @staticmethod
     def buildListForFolder(path, level, renderer):
@@ -708,26 +680,26 @@ class ScreenRenderer:
         bgl.glDisable(bgl.GL_BLEND)
         bgl.glDisable(bgl.GL_TEXTURE_2D)
 
-    def mouseMove(self, x, y):
+    def mouseMove(self, x, y, event):
         self._mouseX = x
         self._mouseY = y
 
-    def mouseClick(self, x, y, button, event):
+    def mouseClick(self, x, y, button, state, event):
         #self._dbg = "%f, %f, %s, %s" % (x, y, button, event)
         # Prevent crash.
         if self._width < 1 or self._height < 1:
             return
 
-        if button == "LEFTMOUSE" and event == "RELEASE":
+        if button == "LEFTMOUSE" and state == "RELEASE":
             for index, e in enumerate(self._items):
                 # The target rectangle, based on current view size.
                 itemRect = self.calcMenuItemRect(index, len(self._items), self._width, self._height)
-                e.testClick(itemRect, (x, y))
+                e.testClick(itemRect, (x, y), event.ctrl)
 
         if button == "RIGHTMOUSE":
             self._finished = True
 
-    def wheel(self, up):
+    def wheel(self, up, event):
         """
         Handle mouse wheel event.
         """
@@ -760,11 +732,11 @@ class AssetFlingerMenu(Operator):
 
         # Forward several events to the renderer.
         if event.type == 'MOUSEMOVE':
-            self._renderer.mouseMove(event.mouse_region_x, event.mouse_region_y)
+            self._renderer.mouseMove(event.mouse_region_x, event.mouse_region_y, event)
         elif event.type == "LEFTMOUSE" or event.type == "MIDDLEMOUSE" or event.type == "RIGHTMOUSE":
-            self._renderer.mouseClick(event.mouse_region_x, event.mouse_region_y, event.type, event.value)
+            self._renderer.mouseClick(event.mouse_region_x, event.mouse_region_y, event.type, event.value, event)
         elif event.type == "WHEELUPMOUSE" or event.type == "WHEELDOWNMOUSE":
-            self._renderer.wheel(event.type == "WHEELUPMOUSE")
+            self._renderer.wheel(event.type == "WHEELUPMOUSE", event)
         else:
             #log(repr(event.type))
             self._renderer.otherEvent(event)
@@ -887,4 +859,12 @@ def unregister():
 
 if __name__ == "__main__":
     register()
+    
+PYDEV_SOURCE_DIR = "C:\\devel\\apps\\eclipse-neon-pydev\\plugins\\org.python.pydev_5.8.0.201706061859\\pysrc"
+import sys
+if PYDEV_SOURCE_DIR not in sys.path:
+    sys.path.append(PYDEV_SOURCE_DIR)
+import pydevd
+pydevd.settrace()
+ 
     
