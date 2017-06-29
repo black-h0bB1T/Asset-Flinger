@@ -1,26 +1,12 @@
 ![Header](http://i.imgur.com/gp3BdlI.jpg)
 
-# Download
-
-* **[Asset_Flinger_Add-on_v0.3.zip](https://raw.githubusercontent.com/BlenderAid/Asset-Flinger/master/releases/Asset_Flinger_Add-on_v0.3.zip)** (Blender 2.78c)
-* **[Asset_Flinger_Add-on_v0.2.zip](http://files.manujarvinen.com/Asset_Flinger/Asset_Flinger_Add-on_v0.2.zip)** (Blender 2.77)
-* **[Asset_Flinger_Add-on_v0.1.zip](http://files.manujarvinen.com/Asset_Flinger/Asset_Flinger_Add-on_v0.1.zip)** (Blender 2.76 or lower)
-
-- **[Installation instructions](https://github.com/BlenderAid/Asset-Flinger#installation)**
-- Includes some nice ready-made ***CC-0 / Public Domain / 100%-free-for-commercial-use*** assets.
-
-# Demo
-
-#### Note: This video shows Asset Flinger 0.1/0.2. The current version has a slighted enhanced UI.
-<a href="http://youtu.be/qYYoSTjIOTY" target="_blank">![Video](http://i.imgur.com/BwRkfsY.jpg)</a>
-#### Screenshot:
-![Screenshot](https://raw.githubusercontent.com/BlenderAid/Asset-Flinger/master/misc/af-0.3-0.jpg)
-
 # Asset Flinger
 Asset Flinger is a **Free Blender Add-on for simple mesh importing via graphical menu**.
 It's aimed at 3D modellers who constantly import pre-made 3D assets from their libraries for building their highly detailed creations.
 
-# Version 0.3 (2017-06-27)
+**This is a fork of Blender Aid's Asset Flinger which you can find [here](https://github.com/BlenderAid/Asset-Flinger). Ideas and development up to version 0.2 is made by Blender Aid, many thanks to them!**
+
+# Additions made to the original (Version 0.3 (2017-06-27))
 This version contains many new features added by h0bB1T:
 * Thumbnails are automatically generated on export.
 	* Thumbnails could be created using 3 different scenes and in different sizes. Selection can be done in the preferences menu, next to the library path setting. This may be enhanced in future releases.
@@ -31,22 +17,23 @@ This version contains many new features added by h0bB1T:
 	* Old assets in **.obj** format are still supported!
 	* The assets that are packed to previous versions of Asset Flinger must be copied into a subfolder in your library to use them, this is not handled in parallel yet.
 
-Please understand that due to the intensive code changes, stability is not granted at the moment. Every bug report is very welcome!
+!!Please understand that due to the intensive code changes, stability is not granted at the moment. Every bug report is very welcome!!
 
-# Usage
-* Add a mesh asset via shortcut: **Ctrl+Shift+Alt+A**
-* Export your own mesh asset to the library via shortcut: **Ctrl+Shift+Alt+E**
+# Download
 
-> **Some history:**
+* **[Asset_Flinger_Add-on_v0.3.zip](https://github.com/black-h0bB1T/Asset-Flinger/blob/master/releases/Asset_Flinger_Add-on_v0.3.zip?raw=true)** (Blender 2.78c)
+* **[Asset_Flinger_Add-on_v0.2.zip](http://files.manujarvinen.com/Asset_Flinger/Asset_Flinger_Add-on_v0.2.zip)** (Blender 2.77)
+* **[Asset_Flinger_Add-on_v0.1.zip](http://files.manujarvinen.com/Asset_Flinger/Asset_Flinger_Add-on_v0.1.zip)** (Blender 2.76 or lower)
 
-> This add-on was made possible by the efforts of a 3D modeler and 3 anonymous programmers on their personal free time. The project started a long time ago **[back in 2013](http://blenderartists.org/forum/showthread.php?293731-OBJ-Asset-Library-Addon)** and was active only partly over time. There was some inspiration to develop it for the **[Blender Market's Add-on Contest](http://community.cgcookie.com/t/blender-add-on-contest-winners-announced/392)**. Thanks to Blender Market for the ***Honorable Mention for Asset Flinger!*** One idea was to actually put it on sale to there. - However, the add-on never got finished and so it's not polished enough in order to be put on sale. Also, **[the new awesome and extensive asset management system for Blender](https://mont29.wordpress.com/2015/01/14/assets-filebrowser-preliminary-work-experimental-build-i/)** is slowly coming and **[going to](http://wiki.blender.org/index.php/User:Brita/Proposals/UIPreviews)** render this add-on useless, so there's no sense to keep this behind curtains any longer anyway.
+- **[Installation instructions](https://github.com/BlenderAid/Asset-Flinger#installation)**
+- Includes some nice ready-made ***CC-0 / Public Domain / 100%-free-for-commercial-use*** assets.
 
-It is now released as a free add-on. Feel free to fork it if you like.
-Although, **contributions as pull requests** to the project would be highly appreciated :)
+# Demo
 
-> Also CC-0 licenced .obj assets would be gladly accepted as contributions, and I plan on making and adding more of them - I'm very picky about their quality, though. Personally I like to use Asset Flinger for my daily modeling, regardless of its shortcomings :)
-
-> — Manu Järvinen
+#### Note: This video shows Asset Flinger 0.1/0.2. The current version has a slighted enhanced UI.
+<a href="http://youtu.be/qYYoSTjIOTY" target="_blank">![Video](http://i.imgur.com/BwRkfsY.jpg)</a>
+#### Screenshot (Version 0.3):
+![Screenshot](https://raw.githubusercontent.com/black-h0bB1T/Asset-Flinger/master/misc/af-0.3-0.jpg)
 
 # Installation
 #### Installing the Add-on :
@@ -62,6 +49,10 @@ Although, **contributions as pull requests** to the project would be highly appr
 1. In the Add-ons panel in Blender's User Preferences, put your own Asset Library location to Asset Flinger Add-on's preferences
 2. Export your 3D models to the library with **Ctrl+Shift+Alt+E**
 3. Make that location as a bookmark for your convenience
+
+# Usage
+* Add a mesh asset via shortcut: **Ctrl+Shift+Alt+A**
+* Export your own mesh asset to the library via shortcut: **Ctrl+Shift+Alt+E**
 
 # Known Bugs / Issues
 * Doesn't work in Local View (isolation mode)
